@@ -6,50 +6,7 @@ const ProjectContext = createContext(null);
 
 const API_BASE = getApiBase();
 
-export const SEED_PROJECTS = [
-  {
-    id: 1,
-    name: "Enterprise Core Banking Cloud Migration",
-    code: "CB-MIG",
-    description: "Multi-region migration of core ledger infrastructure to high-throughput cloud clusters.",
-    status: "In Progress",
-    startDate: "2026-01-10",
-    endDate: "2026-11-30",
-    projectLeadId: 3,
-    projectManagerId: 2,
-    projectLead: { id: 3, fullName: "David Chen" },
-    projectManager: { id: 2, fullName: "Sarah Jenkins" },
-    repository: "https://github.com/neuroforge/core-banking-migration",
-  },
-  {
-    id: 2,
-    name: "AI Document Intelligence Pipeline",
-    code: "AI-DOC",
-    description: "Automated OCR extraction, entity resolution, and compliance audit validation engine.",
-    status: "In Progress",
-    startDate: "2026-03-01",
-    endDate: "2026-09-15",
-    projectLeadId: 3,
-    projectManagerId: 2,
-    projectLead: { id: 3, fullName: "David Chen" },
-    projectManager: { id: 2, fullName: "Sarah Jenkins" },
-    repository: "https://github.com/neuroforge/ai-document-pipeline",
-  },
-  {
-    id: 3,
-    name: "Zero-Trust Identity & RBAC Gateway",
-    code: "ZT-GATE",
-    description: "Stateless JWT authentication service with hardware key multi-factor validation.",
-    status: "Completed",
-    startDate: "2025-08-01",
-    endDate: "2026-02-28",
-    projectLeadId: 3,
-    projectManagerId: 2,
-    projectLead: { id: 3, fullName: "David Chen" },
-    projectManager: { id: 2, fullName: "Sarah Jenkins" },
-    repository: "https://github.com/neuroforge/identity-gateway",
-  },
-];
+export const SEED_PROJECTS = [];
 
 export const ProjectProvider = ({ children }) => {
   const [projects, setProjects] = useState([]);
@@ -68,28 +25,18 @@ export const ProjectProvider = ({ children }) => {
         ? response.data
         : [];
 
-      if (data.length === 0) {
-        const enrichedSeed = SEED_PROJECTS;
-        setProjects(enrichedSeed);
-        if (enrichedSeed.length > 0 && !selectedProjectId) {
-          setSelectedProjectId(enrichedSeed[0].id);
+      setProjects(data);
+
+      if (data.length > 0) {
+        if (!selectedProjectId || !data.some((p) => String(p.id) === String(selectedProjectId))) {
+          setSelectedProjectId(data[0].id);
         }
       } else {
-        const enriched = data;
-
-        setProjects(enriched);
-
-        // Automatically select the first available project
-        if (enriched.length > 0 && !selectedProjectId) {
-          setSelectedProjectId(enriched[0].id);
-        }
+        setSelectedProjectId(null);
       }
     } catch (err) {
-            const enrichedSeed = SEED_PROJECTS;
-      setProjects(enrichedSeed);
-      if (enrichedSeed.length > 0 && !selectedProjectId) {
-        setSelectedProjectId(enrichedSeed[0].id);
-      }
+      setProjects([]);
+      setSelectedProjectId(null);
     } finally {
       setLoading(false);
     }

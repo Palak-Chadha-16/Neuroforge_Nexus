@@ -19,7 +19,7 @@ const ProjectManagerDashboard = () => {
   // Filter projects managed by this PM
   const myProjects = projects.filter((p) => {
     const managerId = p.projectManager?.id ?? p.projectManagerId ?? p.managerId;
-    return String(managerId) === String(currentUser?.id) || projects.length <= 2;
+    return String(managerId) === String(currentUser?.id);
   });
 
   const now = new Date();

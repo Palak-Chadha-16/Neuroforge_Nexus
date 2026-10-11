@@ -7,91 +7,9 @@ const TasksContext = createContext(null);
 
 const API_BASE = `${getApiBase()}/tasks`;
 
-export const SEED_TASKS = [
-  {
-    id: 1,
-    title: "Implement Distributed Transaction Coordinator",
-    description: "Ensure ACID compliance across multi-partition databases during ledger sync.",
-    projectId: 1,
-    assigneeId: 5,
-    status: "In Progress",
-    boardStatus: "In Progress",
-    priority: "High",
-    dueDate: "2026-10-15",
-  },
-  {
-    id: 2,
-    title: "Construct Document Classification ML Pipeline",
-    description: "Train vision transformer model to categorize invoices and legal disclosures.",
-    projectId: 2,
-    assigneeId: 5,
-    status: "In Progress",
-    boardStatus: "In Progress",
-    priority: "Critical",
-    dueDate: "2026-10-20",
-  },
-  {
-    id: 3,
-    title: "Stateless Session Blacklist with Redis Cache",
-    description: "High-performance invalidation mechanism for active tokens upon forced logout.",
-    projectId: 3,
-    assigneeId: 3,
-    status: "Done",
-    boardStatus: "Done",
-    priority: "Medium",
-    dueDate: "2026-02-15",
-  },
-  {
-    id: 4,
-    title: "API Gateway Rate Limiting & Throttling",
-    description: "Prevent DDOS and ensure SLA guarantees for external partner integrations.",
-    projectId: 1,
-    assigneeId: 4,
-    status: "To Do",
-    boardStatus: "To Do",
-    priority: "High",
-    dueDate: "2026-11-01",
-  },
-];
+export const SEED_TASKS = [];
 
-export const SEED_SUBTASKS = [
-  {
-    id: 101,
-    taskId: 1,
-    title: "Create two-phase commit consensus protocol handler",
-    status: "In Progress",
-    priority: "High",
-    assigneeId: 5,
-    dueDate: "2026-10-05",
-  },
-  {
-    id: 102,
-    taskId: 1,
-    title: "Write automated integration tests for network partitioning",
-    status: "To Do",
-    priority: "Medium",
-    assigneeId: 6,
-    dueDate: "2026-10-12",
-  },
-  {
-    id: 103,
-    taskId: 2,
-    title: "Extract text layout embeddings with OCR engine",
-    status: "Done",
-    priority: "Critical",
-    assigneeId: 5,
-    dueDate: "2026-09-10",
-  },
-  {
-    id: 104,
-    taskId: 2,
-    title: "Validate dataset annotations against compliance criteria",
-    status: "In Progress",
-    priority: "High",
-    assigneeId: 7,
-    dueDate: "2026-09-25",
-  },
-];
+export const SEED_SUBTASKS = [];
 
 export const TasksProvider = ({ children }) => {
   const [tasks, setTasks] = useState([]);
@@ -122,8 +40,8 @@ export const TasksProvider = ({ children }) => {
       const data = Array.isArray(response.data) ? response.data : [];
 
       if (data.length === 0) {
-        setTasks(SEED_TASKS.map(normalizeTask));
-        setSubtasks(SEED_SUBTASKS.map(normalizeSubtask));
+        setTasks([]);
+        setSubtasks([]);
       } else {
         const normalizedTasks = data.map(normalizeTask);
         setTasks(normalizedTasks);
@@ -133,14 +51,14 @@ export const TasksProvider = ({ children }) => {
             normalizedTasks.map((task) => axios.get(`${API_BASE}/${task.id}/subtasks`))
           );
           const allSubs = subtaskResults.flatMap((r) => Array.isArray(r.data) ? r.data.map(normalizeSubtask) : []);
-          setSubtasks(allSubs.length > 0 ? allSubs : SEED_SUBTASKS.map(normalizeSubtask));
+          setSubtasks(allSubs);
         } catch {
-          setSubtasks(SEED_SUBTASKS.map(normalizeSubtask));
+          setSubtasks([]);
         }
       }
     } catch (err) {
-            setTasks(SEED_TASKS.map(normalizeTask));
-      setSubtasks(SEED_SUBTASKS.map(normalizeSubtask));
+      setTasks([]);
+      setSubtasks([]);
     } finally {
       setLoading(false);
     }

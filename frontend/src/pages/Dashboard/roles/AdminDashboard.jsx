@@ -46,7 +46,7 @@ const AdminDashboard = () => {
 
     return data.length > 0
       ? data
-      : [{ name: "Active Projects", value: projects.length || 1, color: "#3b82f6" }];
+      : [{ name: "No Projects", value: 1, color: "#94a3b8" }];
   }, [projects]);
 
   /* ================= VISUAL PIE CHART: USERS GROWTH ================= */

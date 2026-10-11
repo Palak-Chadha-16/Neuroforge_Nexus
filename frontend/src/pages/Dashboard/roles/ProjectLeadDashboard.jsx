@@ -17,7 +17,7 @@ const ProjectLeadDashboard = () => {
 
   const ledProjects = projects.filter((p) => {
     const leadId = p.projectLead?.id ?? p.projectLeadId ?? p.leadId;
-    return String(leadId) === String(currentUser?.id) || projects.length <= 2;
+    return String(leadId) === String(currentUser?.id);
   });
 
   const ledProjectTasks = tasks.filter((t) =>
