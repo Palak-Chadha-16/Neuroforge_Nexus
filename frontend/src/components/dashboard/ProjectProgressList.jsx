@@ -1,5 +1,5 @@
-import { useTasks } from "../../context/TasksContext.jsx";
-import { useProjects } from "../../context/ProjectContext.jsx";
+import { useTasks } from "../../context/TasksContextStore.js";
+import { useProjects } from "../../context/ProjectContextStore.js";
 
 const ProjectProgressList = () => {
   const { tasks } = useTasks();

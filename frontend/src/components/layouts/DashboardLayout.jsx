@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useAuth } from "../../context/AuthContext.jsx";
+import { useAuth } from "../../context/AuthContextStore.js";
 import Navbar from "./Navbar.jsx";
 import Sidebar from "./Sidebar.jsx";
 import ChatBot from "../Chatbot/Chatbot.jsx";

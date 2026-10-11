@@ -7,11 +7,11 @@ import {
   PiCheckCircle,
   PiSparkle,
 } from "react-icons/pi";
-import { useAuth } from "../../context/AuthContext.jsx";
-import { useProjects } from "../../context/ProjectContext.jsx";
-import { useTasks } from "../../context/TasksContext.jsx";
-import { useTeams } from "../../context/TeamsContext.jsx";
-import { useProjectTeam } from "../../context/ProjectTeamContext.jsx";
+import { useAuth } from "../../context/AuthContextStore.js";
+import { useProjects } from "../../context/ProjectContextStore.js";
+import { useTasks } from "../../context/TasksContextStore.js";
+import { useTeams } from "../../context/TeamsContextStore.js";
+import { useProjectTeam } from "../../context/ProjectTeamContextStore.js";
 import axios, { getApiBase } from "../../services/api.js";
 
 const CHATBOT_EVENTS_KEY = "nfn_calendar_events_";
@@ -622,7 +622,7 @@ I'm your **NeuroForge SDLC AI Assistant**. You can ask me to schedule meetings, 
       );
 
       const newMeeting = {
-        id: `meeting-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        id: `meeting-${crypto.randomUUID()}`,
         title: meetingTitle,
         label: meetingTitle,
         dueDate: targetDateISO,
@@ -661,7 +661,7 @@ I'm your **NeuroForge SDLC AI Assistant**. You can ask me to schedule meetings, 
         }
 
         const newEvent = {
-          id: `chatbot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          id: `chatbot-${crypto.randomUUID()}`,
           title: label,
           label,
           dueDate: dateHit.iso,

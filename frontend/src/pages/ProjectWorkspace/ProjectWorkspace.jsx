@@ -18,11 +18,11 @@ import {
   PiRocket,
 } from "react-icons/pi";
 
-import { useProjects } from "../../context/ProjectContext.jsx";
-import { useUsers } from "../../context/UsersContext.jsx";
-import { useProjectTeam } from "../../context/ProjectTeamContext.jsx";
-import { useTasks } from "../../context/TasksContext.jsx";
-import { useAuth } from "../../context/AuthContext.jsx";
+import { useProjects } from "../../context/ProjectContextStore.js";
+import { useUsers } from "../../context/UsersContextStore.js";
+import { useProjectTeam } from "../../context/ProjectTeamContextStore.js";
+import { useTasks } from "../../context/TasksContextStore.js";
+import { useAuth } from "../../context/AuthContextStore.js";
 import { ROLES, normalizeRole } from "../../constants/roles.js";
 import ConnectRepoModal from "../../components/project/ConnectRepoModal.jsx";
 import DevOpsPipelineView from "../../components/project/DevOpsPipelineView.jsx";
@@ -60,6 +60,8 @@ const ProjectWorkspace = () => {
 
   const {
     getProjectMembers,
+    error: projectMembersError,
+    loadProjectMembers,
     addProjectMember,
     updateProjectMember,
     removeProjectMember,
@@ -80,6 +82,14 @@ const ProjectWorkspace = () => {
 
   const project = getProjectById(projectId) || selectedProject;
 
+  useEffect(() => {
+    if (projectId) {
+      loadProjectMembers(projectId).catch((error) => {
+        console.error("Failed to refresh project members:", error);
+      });
+    }
+  }, [projectId, loadProjectMembers]);
+
   const initialSection =
     location.state?.section ||
     new URLSearchParams(location.search).get("section") ||
@@ -91,10 +101,16 @@ const ProjectWorkspace = () => {
     const querySection =
       location.state?.section ||
       new URLSearchParams(location.search).get("section");
-    if (querySection && querySection !== activeSection) {
-      setActiveSection(querySection);
-    }
-  }, [location.state?.section, location.search]);
+    if (!querySection || querySection === activeSection) return undefined;
+
+    let active = true;
+    Promise.resolve().then(() => {
+      if (active) setActiveSection(querySection);
+    });
+    return () => {
+      active = false;
+    };
+  }, [location.state?.section, location.search, activeSection]);
 
   const [showEditProject, setShowEditProject] = useState(false);
 
@@ -148,8 +164,12 @@ const ProjectWorkspace = () => {
   }, [project?.id, selectProject]);
 
   useEffect(() => {
-    if (project) {
-      setProjectForm({
+    if (!project) return undefined;
+
+    let active = true;
+    Promise.resolve().then(() => {
+      if (active) {
+        setProjectForm({
         name: project.name || "",
         description: project.description || "",
         code: project.code || "",
@@ -157,14 +177,19 @@ const ProjectWorkspace = () => {
         status: project.status || "Not Started",
         startDate: project.startDate || "",
         endDate: project.endDate || "",
-      });
-    }
+        });
+      }
+    });
+    return () => {
+      active = false;
+    };
   }, [project]);
 
+  const activeProjectId = project?.id;
   const projectMembers = useMemo(() => {
-    if (!project?.id) return [];
+    if (!activeProjectId) return [];
 
-    const members = getProjectMembers(project.id);
+    const members = getProjectMembers(activeProjectId);
 
     return members.map((member) => {
       const user = users.find(
@@ -173,11 +198,16 @@ const ProjectWorkspace = () => {
 
       return {
         ...member,
-        user,
+        user: {
+          ...user,
+          fullName: user?.fullName || member.fullName,
+          name: user?.name || member.fullName,
+          email: user?.email || member.email,
+        },
         status: member.status || "Active",
       };
     });
-  }, [project?.id, getProjectMembers, users]);
+  }, [activeProjectId, getProjectMembers, users]);
 
   const teamLeadMember = useMemo(() => {
     return projectMembers.find(
@@ -195,23 +225,32 @@ const ProjectWorkspace = () => {
   const availableUsers = useMemo(() => {
     if (!project?.id) return [];
 
+    const allowedSystemRoles = {
+      "Team Lead": [ROLES.TEAM_LEAD],
+      Developer: [ROLES.DEVELOPER, ROLES.TEAM_MEMBER],
+      Tester: [ROLES.TESTER],
+      QA: [ROLES.QA],
+    }[memberForm.projectRole] || [];
+
     return users.filter((user) => {
       const alreadyInProject = projectMembers.some(
         (member) => String(member.userId) === String(user.id)
       );
 
-      return !alreadyInProject;
+      return !alreadyInProject &&
+        user.status !== "Inactive" &&
+        allowedSystemRoles.includes(normalizeRole(user.role));
     });
-  }, [users, project?.id, projectMembers]);
+  }, [users, project?.id, projectMembers, memberForm.projectRole]);
 
   const projectTasks = useMemo(() => {
-    if (!project?.id) return [];
+    if (!activeProjectId) return [];
 
     return tasks.filter((task) => {
       const taskProjId = task.projectId ?? task.project?.id ?? task.project_id;
-      return String(taskProjId) === String(project.id);
+      return String(taskProjId) === String(activeProjectId);
     });
-  }, [tasks, project?.id]);
+  }, [tasks, activeProjectId]);
 
   const getUserName = (userId) => {
     const user = users.find(
@@ -297,25 +336,25 @@ const ProjectWorkspace = () => {
   };
 
   const currentRole = normalizeRole(currentUser?.role);
+  const currentUserId = currentUser?.id ?? currentUser?._id;
+  const isProjectManager =
+    currentUserId != null &&
+    String(project?.projectManager?.id ?? project?.projectManagerId) === String(currentUserId);
+  const isProjectLead =
+    currentUserId != null &&
+    String(project?.projectLead?.id ?? project?.projectLeadId) === String(currentUserId);
 
-  const canManageProjects = [
-    ROLES.ADMIN,
-    ROLES.PROJECT_MANAGER,
-    ROLES.PROJECT_LEAD,
-  ].includes(currentRole);
+  const canManageProjects =
+    currentRole === ROLES.ADMIN ||
+    (currentRole === ROLES.PROJECT_MANAGER && isProjectManager) ||
+    (currentRole === ROLES.PROJECT_LEAD && isProjectLead);
 
-  const canManageTeam = [
-    ROLES.ADMIN,
-    ROLES.PROJECT_MANAGER,
-    ROLES.PROJECT_LEAD,
-    ROLES.TEAM_LEAD,
-  ].includes(currentRole);
+  const canManageTeam =
+    canManageProjects ||
+    (currentRole === ROLES.TEAM_LEAD &&
+      String(teamLeadMember?.userId) === String(currentUserId));
 
-  const canManageTasks = [
-    ROLES.ADMIN,
-    ROLES.PROJECT_MANAGER,
-    ROLES.PROJECT_LEAD,
-  ].includes(currentRole);
+  const canManageTasks = canManageProjects;
 
   const userSkillStr = String(currentUser?.skill || "").toLowerCase();
   const canTriggerPipeline =
@@ -338,7 +377,7 @@ const ProjectWorkspace = () => {
 
     if (!project?.id) return;
 
-        const result = await updateProject(project.id, projectForm);
+    const result = await updateProject(project.id, projectForm);
 
     if (result?.success) {
       setShowEditProject(false);
@@ -443,7 +482,7 @@ const ProjectWorkspace = () => {
       return;
     }
 
-        const result = await updateProjectMemberStatus(
+    const result = await updateProjectMemberStatus(
       project.id,
       member.userId,
       status
@@ -457,16 +496,16 @@ const ProjectWorkspace = () => {
   const handleDeleteMember = async () => {
     if (!project?.id || !confirmDeleteMember) return;
 
-        const result = await removeProjectMember(
+    const result = await removeProjectMember(
       project.id,
       confirmDeleteMember.userId
     );
 
-    if (!result?.success) {
+    if (result?.success) {
+      setConfirmDeleteMember(null);
+    } else {
       alert(result?.message || "Failed to remove team member.");
     }
-
-    setConfirmDeleteMember(null);
   };
 
   const openCreateTask = () => {
@@ -641,6 +680,12 @@ const ProjectWorkspace = () => {
               {project.name}
             </span>
           </div>
+
+          {projectMembersError && (
+            <p role="alert" className="border-b border-red-200 bg-red-50 px-5 py-3 text-sm text-red-700">
+              {projectMembersError}
+            </p>
+          )}
 
           <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-[#0f172a]">
             <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">

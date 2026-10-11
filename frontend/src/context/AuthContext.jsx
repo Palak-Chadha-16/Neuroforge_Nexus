@@ -1,7 +1,7 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import axios from "axios";
 import { normalizeRole, ROLES } from "../constants/roles.js";
-import { SEED_USERS } from "./UsersContext.jsx";
+import { AuthContext } from "./AuthContextStore.js";
 import {
   setToken,
   clearToken,
@@ -10,12 +10,10 @@ import {
   getApiBase,
 } from "../services/api.js";
 
-export const AuthContext = createContext(null);
-
 const API_BASE = getApiBase();
 const AUTH_USER_KEY = "auth_user";
 
-export const normalizeUser = (user) => {
+const normalizeUser = (user) => {
   if (!user) return null;
 
   const role = normalizeRole(user.role || ROLES.UNASSIGNED);
@@ -38,8 +36,35 @@ export const normalizeUser = (user) => {
 };
 
 export const AuthProvider = ({ children }) => {
-  const [currentUser, setCurrentUser] = useState(null);
-  const [authReady, setAuthReady] = useState(false);
+  const [currentUser, setCurrentUser] = useState(() => {
+    const savedUser =
+      sessionStorage.getItem(AUTH_USER_KEY) ||
+      localStorage.getItem(AUTH_USER_KEY);
+    if (!getToken() || !savedUser) return null;
+    try {
+      const saved = JSON.parse(savedUser);
+      if (!saved) return null;
+      const role = normalizeRole(saved.role || ROLES.UNASSIGNED);
+      return {
+        ...saved,
+        id: saved.id,
+        fullName: saved.fullName || saved.name || "User",
+        name: saved.fullName || saved.name || "User",
+        email: saved.email || "",
+        role,
+        teamId: saved.teamId ?? null,
+        skills: Array.isArray(saved.skills)
+          ? saved.skills
+          : saved.skill
+            ? [saved.skill]
+            : [],
+        status: saved.status || "Active",
+      };
+    } catch {
+      return null;
+    }
+  });
+  const [authReady, setAuthReady] = useState(() => !getToken());
 
   useEffect(() => {
     const savedUser =
@@ -51,14 +76,12 @@ export const AuthProvider = ({ children }) => {
     if (!token) {
       sessionStorage.removeItem(AUTH_USER_KEY);
       localStorage.removeItem(AUTH_USER_KEY);
-      setCurrentUser(null);
-      setAuthReady(true);
       return;
     }
 
     if (savedUser) {
       try {
-        setCurrentUser(normalizeUser(JSON.parse(savedUser)));
+        JSON.parse(savedUser);
       } catch {
         sessionStorage.removeItem(AUTH_USER_KEY);
         localStorage.removeItem(AUTH_USER_KEY);
@@ -77,16 +100,7 @@ export const AuthProvider = ({ children }) => {
         storage.setItem(AUTH_USER_KEY, JSON.stringify(user));
         setCurrentUser(user);
       })
-      .catch((err) => {
-        // If backend is offline or it's a demo session, retain savedUser so team members stay logged in
-        if (savedUser && (!err.response || token?.startsWith("demo-token"))) {
-          try {
-            setCurrentUser(normalizeUser(JSON.parse(savedUser)));
-            return;
-          } catch {
-            // ignore
-          }
-        }
+      .catch(() => {
         clearToken();
         sessionStorage.removeItem(AUTH_USER_KEY);
         localStorage.removeItem(AUTH_USER_KEY);
@@ -174,37 +188,10 @@ export const AuthProvider = ({ children }) => {
         success: true,
       };
     } catch (error) {
-      const normalizedEmail = (email || "").trim().toLowerCase();
-      const matchedSeed = SEED_USERS.find(
-        (u) =>
-          u.email.toLowerCase() === normalizedEmail ||
-          u.role.toLowerCase() === normalizedEmail
-      );
-
       const isNetworkError =
         !error.response ||
         error.code === "ERR_NETWORK" ||
         error.code === "ECONNREFUSED";
-
-      // If backend is unreachable or demo testing password, allow demo authentication
-      if ((isNetworkError || password === "password123") && matchedSeed) {
-        const demoToken = `demo-token-${matchedSeed.id}-${Date.now()}`;
-        if (remember) {
-          setTokenPersistent(demoToken);
-        } else {
-          setToken(demoToken);
-        }
-        const user = normalizeUser({ ...matchedSeed, token: demoToken });
-        const storage = remember ? localStorage : sessionStorage;
-        storage.setItem(AUTH_USER_KEY, JSON.stringify(user));
-        if (remember) {
-          sessionStorage.removeItem(AUTH_USER_KEY);
-        } else {
-          localStorage.removeItem(AUTH_USER_KEY);
-        }
-        setCurrentUser(user);
-        return { success: true };
-      }
 
       clearToken();
       sessionStorage.removeItem(AUTH_USER_KEY);
@@ -216,27 +203,10 @@ export const AuthProvider = ({ children }) => {
         message:
           error.response?.data?.message ||
           (isNetworkError
-            ? "Backend offline. Click any demo profile below to sign in instantly."
+            ? "Unable to connect to the backend."
             : "Invalid email or password."),
       };
     }
-  };
-
-  const loginAsDemo = (roleOrEmail = "developer") => {
-    const target =
-      SEED_USERS.find(
-        (u) =>
-          u.role.toLowerCase() === roleOrEmail.toLowerCase() ||
-          u.email.toLowerCase() === roleOrEmail.toLowerCase()
-      ) || SEED_USERS[0];
-
-    const demoToken = `demo-token-${target.id}-${Date.now()}`;
-    setToken(demoToken);
-    const user = normalizeUser({ ...target, token: demoToken });
-    sessionStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
-    localStorage.removeItem(AUTH_USER_KEY);
-    setCurrentUser(user);
-    return { success: true, user };
   };
 
   const logout = async () => {
@@ -308,7 +278,6 @@ export const AuthProvider = ({ children }) => {
         authReady,
         register,
         login,
-        loginAsDemo,
         logout,
         deleteAccount,
         updateCurrentUser,
@@ -318,5 +287,3 @@ export const AuthProvider = ({ children }) => {
     </AuthContext.Provider>
   );
 };
-
-export const useAuth = () => useContext(AuthContext);

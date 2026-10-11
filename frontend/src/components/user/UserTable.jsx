@@ -9,8 +9,8 @@ import {
 } from "react-icons/pi";
 import Pagination from "./Pagination.jsx";
 import { formatRole } from "../../constants/roles.js";
-import { useProjectTeam } from "../../context/ProjectTeamContext.jsx";
-import { useProjects } from "../../context/ProjectContext.jsx";
+import { useProjectTeam } from "../../context/ProjectTeamContextStore.js";
+import { useProjects } from "../../context/ProjectContextStore.js";
 
 const UserTable = ({
   users,

@@ -13,7 +13,7 @@ import {
   PiX,
   PiXCircle,
 } from "react-icons/pi";
-import { AuthContext } from "../../context/AuthContext.jsx";
+import { AuthContext } from "../../context/AuthContextStore.js";
 import axios, { getApiBase } from "../../services/api.js";
 import BugActivityTimeline from "./components/BugActivityTimeline.jsx";
 import BugAISummary from "./components/BugAISummary.jsx";
@@ -384,7 +384,14 @@ const BugReporting = () => {
   };
 
   useEffect(() => {
-    loadData();
+    let active = true;
+    Promise.resolve().then(() => {
+      if (active) return loadData();
+      return undefined;
+    });
+    return () => {
+      active = false;
+    };
   }, []);
 
   const selectedBugId = selectedBug?.id;

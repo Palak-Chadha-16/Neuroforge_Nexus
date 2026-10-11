@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-const TEAM_ROLES = ["Manager", "Member"];
+const TEAM_ROLES = ["Team Lead", "Developer", "Tester", "QA"];
 
 const EditMemberForm = ({ member, onCancel, onSave }) => {
   const [teamRole, setTeamRole] = useState(member.teamRole);
@@ -22,7 +22,7 @@ const EditMemberForm = ({ member, onCancel, onSave }) => {
         </h2>
 
         <p className="mb-5 mt-1 text-sm text-[#64748B]">
-          {member.user?.fullName || "Unknown User"}
+          {member.fullName || "Unknown User"}
         </p>
 
         <form onSubmit={handleSubmit}>

@@ -1,19 +1,17 @@
 import { Link } from "react-router-dom";
 import {
-  PiTarget,
   PiListChecks,
-  PiClockCountdown,
   PiPlus,
   PiFolder,
 } from "react-icons/pi";
-import { useAuth } from "../../../context/AuthContext.jsx";
-import { useProjects } from "../../../context/ProjectContext.jsx";
-import { useTasks } from "../../../context/TasksContext.jsx";
+import { useAuth } from "../../../context/AuthContextStore.js";
+import { useProjects } from "../../../context/ProjectContextStore.js";
+import { useTasks } from "../../../context/TasksContextStore.js";
 
 const ProjectLeadDashboard = () => {
   const { currentUser } = useAuth();
   const { projects } = useProjects();
-  const { tasks, subtasks = [] } = useTasks();
+  const { tasks } = useTasks();
 
   const ledProjects = projects.filter((p) => {
     const leadId = p.projectLead?.id ?? p.projectLeadId ?? p.leadId;

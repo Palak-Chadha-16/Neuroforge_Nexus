@@ -6,12 +6,10 @@ import {
   PiCheckCircle,
   PiXCircle,
   PiClock,
-  PiArrowsClockwise,
   PiSpinnerGap,
   PiCloudCheck,
   PiRocket,
   PiArrowSquareOut,
-  PiShieldCheck,
   PiTerminal,
   PiX,
   PiGithubLogo,
@@ -142,7 +140,6 @@ export const DevOpsPipelineView = ({
     }
   });
 
-  const [loading, setLoading] = useState(false);
   const [filterBranch, setFilterBranch] = useState("All");
   const [filterStatus, setFilterStatus] = useState("All");
 
@@ -161,7 +158,6 @@ export const DevOpsPipelineView = ({
     if (!projectId) return;
 
     let isMounted = true;
-    setLoading(true);
 
     const fetchData = async () => {
       try {
@@ -182,8 +178,6 @@ export const DevOpsPipelineView = ({
         }
       } catch (err) {
         console.warn("DevOps API fallback in use:", err);
-      } finally {
-        if (isMounted) setLoading(false);
       }
     };
 

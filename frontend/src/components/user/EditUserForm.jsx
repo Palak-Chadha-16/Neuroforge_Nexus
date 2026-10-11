@@ -9,7 +9,7 @@ import {
 import {
   ROLE_DEFAULT_SKILLS,
   normalizeUserRole,
-} from "../../context/UsersContext.jsx";
+} from "../../context/UsersContextStore.js";
 import { formatRole } from "../../constants/roles.js";
 
 const AVAILABLE_ROLES = [

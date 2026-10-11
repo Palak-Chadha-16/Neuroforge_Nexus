@@ -6,10 +6,10 @@ import {
   PiKanban,
   PiCalendarBlank,
 } from "react-icons/pi";
-import { useAuth } from "../../context/AuthContext.jsx";
-import { useTasks } from "../../context/TasksContext.jsx";
-import { useProjects } from "../../context/ProjectContext.jsx";
-import { useTeams } from "../../context/TeamsContext.jsx";
+import { useAuth } from "../../context/AuthContextStore.js";
+import { useTasks } from "../../context/TasksContextStore.js";
+import { useProjects } from "../../context/ProjectContextStore.js";
+import { useTeams } from "../../context/TeamsContextStore.js";
 import { ROLES, normalizeRole, formatRole } from "../../constants/roles.js";
 
 const priorityColor = {
@@ -24,9 +24,7 @@ const MyTask = () => {
   const {
     tasks,
     subtasks = [],
-    updateSubtask,
     updateSubtaskStatus,
-    updateTask,
     updateTaskStatus,
   } = useTasks();
 
@@ -35,12 +33,7 @@ const MyTask = () => {
 
   const role = normalizeRole(currentUser?.role);
 
-  if (role === ROLES.ADMIN) {
-    return <Navigate to="/dashboard" replace />;
-  }
-
   const [activeTab, setActiveTab] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("ALL");
 
   const myParentTasks = useMemo(() => {
     return tasks.filter(
@@ -70,7 +63,7 @@ const MyTask = () => {
     );
   }, [subtasks, myTeam?.id]);
 
-  const now = new Date();
+  const now = useMemo(() => new Date(), []);
 
   const handleParentTaskStatusChange = async (task, newStatus) => {
     const res = await updateTaskStatus(task.id, newStatus);
@@ -144,13 +137,7 @@ const MyTask = () => {
 
   const displayedItems = useMemo(() => {
     if (activeTab === "team_work") {
-      if (statusFilter === "ALL") {
-        return teamWorkItems;
-      }
-
-      return teamWorkItems.filter(
-        (subtask) => getStatus(subtask) === statusFilter
-      );
+      return teamWorkItems;
     }
 
     let items = allMyItems;
@@ -187,7 +174,6 @@ const MyTask = () => {
     return items;
   }, [
     activeTab,
-    statusFilter,
     allMyItems,
     teamWorkItems,
     now,
@@ -211,6 +197,10 @@ const MyTask = () => {
       new Date(item.dueDate) < now &&
       getStatus(item) !== "Done"
   ).length;
+
+  if (role === ROLES.ADMIN) {
+    return <Navigate to="/dashboard" replace />;
+  }
 
   return (
     <div className="min-h-full space-y-8 bg-transparent p-1">

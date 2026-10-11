@@ -1,15 +1,13 @@
-import React, { useState, useMemo } from "react";
+import { useState, useMemo } from "react";
 import {
   PiCalendarBlank,
   PiClock,
   PiUserCircle,
   PiArrowSquareOut,
   PiMagnifyingGlass,
-  PiFunnel,
   PiCheckCircle,
   PiWarningCircle,
   PiHourglassHigh,
-  PiFlag,
 } from "react-icons/pi";
 
 const PRIORITY_BADGES = {

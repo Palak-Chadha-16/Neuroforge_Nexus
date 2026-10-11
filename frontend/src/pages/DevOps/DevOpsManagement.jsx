@@ -2,13 +2,9 @@ import { useState, useMemo } from "react";
 import {
   PiRocket,
   PiFolder,
-  PiGithubLogo,
-  PiCpu,
-  PiCheckCircle,
-  PiClock,
 } from "react-icons/pi";
-import { useProjects } from "../../context/ProjectContext.jsx";
-import { useAuth } from "../../context/AuthContext.jsx";
+import { useProjects } from "../../context/ProjectContextStore.js";
+import { useAuth } from "../../context/AuthContextStore.js";
 import { ROLES, normalizeRole } from "../../constants/roles.js";
 import DevOpsPipelineView from "../../components/project/DevOpsPipelineView.jsx";
 import ConnectRepoModal from "../../components/project/ConnectRepoModal.jsx";

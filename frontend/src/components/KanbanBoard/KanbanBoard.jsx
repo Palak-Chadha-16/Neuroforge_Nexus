@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   PiListChecks,
   PiClock,
@@ -12,8 +12,8 @@ import KanbanColumn from "./KanbanColumn.jsx";
 import KanbanTimelineView from "./KanbanTimelineView.jsx";
 import KanbanListView from "./KanbanListView.jsx";
 import TaskDetails from "../task/TaskDetails.jsx";
-import { useTasks } from "../../context/TasksContext.jsx";
-import { useProjects } from "../../context/ProjectContext.jsx";
+import { useTasks } from "../../context/TasksContextStore.js";
+import { useProjects } from "../../context/ProjectContextStore.js";
 import "./Kanban.css";
 
 const COLUMNS = [

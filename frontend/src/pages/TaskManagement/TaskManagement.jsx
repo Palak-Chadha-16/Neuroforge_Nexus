@@ -1,12 +1,12 @@
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
-import { useTasks } from "../../context/TasksContext.jsx";
-import { useUsers } from "../../context/UsersContext.jsx";
-import { useProjects } from "../../context/ProjectContext.jsx";
-import { useProjectTeam } from "../../context/ProjectTeamContext.jsx";
-import { useTeams } from "../../context/TeamsContext.jsx";
-import { useAuth } from "../../context/AuthContext.jsx";
+import { useTasks } from "../../context/TasksContextStore.js";
+import { useUsers } from "../../context/UsersContextStore.js";
+import { useProjects } from "../../context/ProjectContextStore.js";
+import { useProjectTeam } from "../../context/ProjectTeamContextStore.js";
+import { useTeams } from "../../context/TeamsContextStore.js";
+import { useAuth } from "../../context/AuthContextStore.js";
 import Can from "../../components/common/Can.jsx";
 import TaskDetails from "../../components/task/TaskDetails.jsx";
 import {

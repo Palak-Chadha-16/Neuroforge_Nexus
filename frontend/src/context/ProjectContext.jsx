@@ -1,12 +1,14 @@
-import { createContext, useContext, useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import axios from "axios";
 import { getApiBase } from "../services/api.js";
-
-const ProjectContext = createContext(null);
+import { ProjectContext } from "./ProjectContextStore.js";
 
 const API_BASE = getApiBase();
-
-export const SEED_PROJECTS = [];
+const getErrorMessage = (error, fallback) =>
+  error.response?.data?.message ||
+  error.response?.data?.detail ||
+  error.message ||
+  fallback;
 
 export const ProjectProvider = ({ children }) => {
   const [projects, setProjects] = useState([]);
@@ -14,7 +16,7 @@ export const ProjectProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const fetchProjects = async () => {
+  const fetchProjects = useCallback(async () => {
     setLoading(true);
     setError("");
 
@@ -28,23 +30,34 @@ export const ProjectProvider = ({ children }) => {
       setProjects(data);
 
       if (data.length > 0) {
-        if (!selectedProjectId || !data.some((p) => String(p.id) === String(selectedProjectId))) {
-          setSelectedProjectId(data[0].id);
-        }
+        setSelectedProjectId((currentId) => {
+          if (!currentId || !data.some((p) => String(p.id) === String(currentId))) {
+            return data[0].id;
+          }
+          return currentId;
+        });
       } else {
         setSelectedProjectId(null);
       }
     } catch (err) {
       setProjects([]);
       setSelectedProjectId(null);
+      setError(getErrorMessage(err, "Projects could not be loaded."));
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchProjects();
-  }, []);
+    let active = true;
+    Promise.resolve().then(() => {
+      if (active) return fetchProjects();
+      return undefined;
+    });
+    return () => {
+      active = false;
+    };
+  }, [fetchProjects]);
 
   const buildPayload = (formData) => ({
     name: formData.name,
@@ -81,6 +94,8 @@ export const ProjectProvider = ({ children }) => {
         ...prev,
         projectWithRepo,
       ]);
+      setSelectedProjectId(projectWithRepo.id);
+      await fetchProjects();
 
       return {
         success: true,
@@ -89,9 +104,7 @@ export const ProjectProvider = ({ children }) => {
     } catch (err) {
       return {
         success: false,
-        message:
-          err.response?.data?.message ||
-          "Failed to create project.",
+        message: getErrorMessage(err, "Failed to create project."),
       };
     }
   };
@@ -121,6 +134,7 @@ export const ProjectProvider = ({ children }) => {
             : project
         )
       );
+      await fetchProjects();
 
       return {
         success: true,
@@ -129,9 +143,7 @@ export const ProjectProvider = ({ children }) => {
     } catch (err) {
       return {
         success: false,
-        message:
-          err.response?.data?.message ||
-          "Failed to update project.",
+        message: getErrorMessage(err, "Failed to update project."),
       };
     }
   };
@@ -171,6 +183,7 @@ export const ProjectProvider = ({ children }) => {
             : project
         )
       );
+      await fetchProjects();
 
       return {
         success: true,
@@ -179,9 +192,7 @@ export const ProjectProvider = ({ children }) => {
     } catch (err) {
       return {
         success: false,
-        message:
-          err.response?.data?.message ||
-          "Failed to update project status.",
+        message: getErrorMessage(err, "Failed to update project status."),
       };
     }
   };
@@ -193,9 +204,7 @@ export const ProjectProvider = ({ children }) => {
       );
 
       setProjects((prev) =>
-        prev.filter(
-          (project) => project.id !== projectId
-        )
+        prev.filter((project) => String(project.id) !== String(projectId))
       );
 
       if (
@@ -204,14 +213,13 @@ export const ProjectProvider = ({ children }) => {
       ) {
         setSelectedProjectId(null);
       }
+      await fetchProjects();
 
       return { success: true };
     } catch (err) {
       return {
         success: false,
-        message:
-          err.response?.data?.message ||
-          "Failed to delete project.",
+        message: getErrorMessage(err, "Failed to delete project."),
       };
     }
   };
@@ -270,6 +278,3 @@ export const ProjectProvider = ({ children }) => {
     </ProjectContext.Provider>
   );
 };
-
-export const useProjects = () =>
-  useContext(ProjectContext);

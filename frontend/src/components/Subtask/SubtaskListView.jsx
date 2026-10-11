@@ -1,12 +1,10 @@
-import React, { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import {
   PiMagnifyingGlass,
-  PiCalendarBlank,
   PiUserCircle,
   PiArrowSquareOut,
   PiListDashes,
   PiArrowsDownUp,
-  PiCheckCircle,
   PiLockKey,
 } from "react-icons/pi";
 import { canMoveSubtaskKanban } from "../../utils/access.js";
@@ -78,10 +76,10 @@ const SubtaskListView = ({
   const [sortBy, setSortBy] = useState("dueDate"); // 'dueDate', 'priority', 'title', 'status'
   const [sortOrder, setSortOrder] = useState("asc");
 
-  const getAssignee = (assigneeId) => {
+  const getAssignee = useCallback((assigneeId) => {
     if (!assigneeId) return null;
     return users.find((u) => String(u.id) === String(assigneeId));
-  };
+  }, [users]);
 
   // Filtering & Sorting
   const processedSubtasks = useMemo(() => {
@@ -128,7 +126,7 @@ const SubtaskListView = ({
     });
 
     return result;
-  }, [subtasks, searchTerm, statusFilter, priorityFilter, sortBy, sortOrder, users]);
+  }, [subtasks, searchTerm, statusFilter, priorityFilter, sortBy, sortOrder, getAssignee]);
 
   const toggleSort = (field) => {
     if (sortBy === field) {

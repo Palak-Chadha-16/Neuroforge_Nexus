@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import { useState, useMemo } from "react";
 import {
   PiMagnifyingGlass,
   PiCalendarBlank,
@@ -6,7 +6,6 @@ import {
   PiArrowSquareOut,
   PiListDashes,
   PiArrowsDownUp,
-  PiCheckCircle,
 } from "react-icons/pi";
 
 const PRIORITY_BADGES = {
@@ -53,7 +52,7 @@ const KanbanListView = ({ tasks = [], onUpdateStatus, onSelectTask }) => {
   const [statusFilter, setStatusFilter] = useState("All");
   const [priorityFilter, setPriorityFilter] = useState("All");
   const [sortBy, setSortBy] = useState("dueDate"); // 'dueDate', 'priority', 'title', 'status'
-  const [sortOrder, setSortOrder] = useState("asc");
+  const [sortOrder] = useState("asc");
 
   // Filtering & Sorting
   const processedTasks = useMemo(() => {

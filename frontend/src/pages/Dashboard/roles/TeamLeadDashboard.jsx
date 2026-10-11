@@ -6,14 +6,14 @@ import {
   PiUserPlus,
   PiBriefcase,
 } from "react-icons/pi";
-import { useAuth } from "../../../context/AuthContext.jsx";
-import { useTasks } from "../../../context/TasksContext.jsx";
-import { useUsers } from "../../../context/UsersContext.jsx";
-import { useTeams } from "../../../context/TeamsContext.jsx";
+import { useAuth } from "../../../context/AuthContextStore.js";
+import { useTasks } from "../../../context/TasksContextStore.js";
+import { useUsers } from "../../../context/UsersContextStore.js";
+import { useTeams } from "../../../context/TeamsContextStore.js";
 
 const TeamLeadDashboard = () => {
   const { currentUser } = useAuth();
-  const { tasks, subtasks = [] } = useTasks();
+  const { subtasks = [] } = useTasks();
   const { users } = useUsers();
   const { teams } = useTeams();
 

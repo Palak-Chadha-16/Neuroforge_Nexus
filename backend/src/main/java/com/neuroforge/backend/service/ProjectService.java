@@ -271,8 +271,8 @@ public class ProjectService {
         validateProjectRole(projectRole);
         validateProjectRoleMatchesUser(user, projectRole);
         if ("Team Lead".equalsIgnoreCase(projectRole)
-                && projectMemberAssignmentRepository.findByProjectIdOrderByAssignedAtAsc(projectId).stream()
-                    .anyMatch(m -> "Team Lead".equalsIgnoreCase(m.getProjectRole()))) {
+                && projectMemberAssignmentRepository
+                    .existsByProjectIdAndProjectRoleIgnoreCaseAndUserIdNot(projectId, "Team Lead", userId)) {
             throw new BusinessRuleException("This project already has a Team Lead");
         }
         project.getMembers().add(user);
@@ -296,8 +296,8 @@ public class ProjectService {
         validateProjectRoleMatchesUser(assignment.getUser(), projectRole);
         if ("Team Lead".equalsIgnoreCase(projectRole)
                 && !"Team Lead".equalsIgnoreCase(assignment.getProjectRole())
-                && projectMemberAssignmentRepository.findByProjectIdOrderByAssignedAtAsc(projectId).stream()
-                    .anyMatch(m -> !m.getUser().getId().equals(userId) && "Team Lead".equalsIgnoreCase(m.getProjectRole()))) {
+                && projectMemberAssignmentRepository
+                    .existsByProjectIdAndProjectRoleIgnoreCaseAndUserIdNot(projectId, "Team Lead", userId)) {
             throw new BusinessRuleException("This project already has a Team Lead");
         }
         assignment.setProjectRole(normalizeProjectRole(projectRole));
@@ -340,28 +340,29 @@ public class ProjectService {
         String normalized = normalizeProjectRole(value);
         Role role = user.getRole();
         boolean ok = switch (normalized) {
-            case "Team Lead" -> role == Role.TEAM_LEAD || role == Role.ADMIN;
+            case "Team Lead" -> role == Role.TEAM_LEAD;
             case "Tester" -> role == Role.TESTER;
             case "QA" -> role == Role.QA;
-            default -> role == Role.DEVELOPER || role == Role.TEAM_MEMBER || role == Role.ADMIN;
+            default -> role == Role.DEVELOPER || role == Role.TEAM_MEMBER;
         };
         if (!ok) throw new BusinessRuleException("Project role " + normalized + " does not match the user's system role " + role.getLabel());
     }
 
     private void validateProjectRole(String value) {
         String role = normalizeProjectRole(value);
-        if (!(role.equals("Team Lead") || role.equals("Developer") || role.equals("Tester") || role.equals("QA"))) {
+        if (!Set.of("Team Lead", "Developer", "Tester", "QA").contains(role)) {
             throw new IllegalArgumentException("Project role must be Team Lead, Developer, Tester or QA");
         }
     }
 
     private String normalizeProjectRole(String value) {
-        if (value == null) return "Developer";
+        if (value == null || value.isBlank()) return "";
         String key = value.trim().replace('_', ' ').replace('-', ' ');
         if (key.equalsIgnoreCase("team lead")) return "Team Lead";
+        if (key.equalsIgnoreCase("developer")) return "Developer";
         if (key.equalsIgnoreCase("tester")) return "Tester";
         if (key.equalsIgnoreCase("qa") || key.equalsIgnoreCase("qa specialist")) return "QA";
-        return "Developer";
+        return value.trim();
     }
 
     // ------------------------------------------------------------------ priority
@@ -532,12 +533,28 @@ public class ProjectService {
     }
 
     private void syncAssignments(Project project) {
-        Set<Long> memberIds = project.getMembers().stream().map(User::getId).collect(Collectors.toSet());
-        for (com.neuroforge.backend.entity.ProjectMemberAssignment assignment : projectMemberAssignmentRepository.findByProjectIdOrderByAssignedAtAsc(project.getId())) {
-            if (!memberIds.contains(assignment.getUser().getId())) {
-                projectMemberAssignmentRepository.delete(assignment);
+        boolean projectMembersChanged = false;
+        if (project.getTeam() != null) {
+            for (TeamMember teamMember : teamMemberRepository.findByTeamId(project.getTeam().getId())) {
+                User user = teamMember.getUser();
+                if (project.getMembers().stream().noneMatch(member -> member.getId().equals(user.getId()))) {
+                    project.getMembers().add(user);
+                    projectMembersChanged = true;
+                }
+                if (projectMemberAssignmentRepository
+                        .findByProjectIdAndUserId(project.getId(), user.getId()).isEmpty()) {
+                    var assignment = new com.neuroforge.backend.entity.ProjectMemberAssignment();
+                    assignment.setProject(project);
+                    assignment.setUser(user);
+                    assignment.setProjectRole(isAssignableProjectRole(teamMember.getTeamRole())
+                            ? normalizeProjectRole(teamMember.getTeamRole())
+                            : projectRoleFromUser(user));
+                    assignment.setMemberStatus(user.isActive() ? "Active" : "Inactive");
+                    projectMemberAssignmentRepository.save(assignment);
+                }
             }
         }
+
         for (User user : project.getMembers()) {
             var existing = projectMemberAssignmentRepository.findByProjectIdAndUserId(project.getId(), user.getId());
             if (existing.isEmpty()) {
@@ -548,12 +565,18 @@ public class ProjectService {
                 assignment.setMemberStatus(user.isActive() ? "Active" : "Inactive");
                 projectMemberAssignmentRepository.save(assignment);
             }
-            syncTeamMember(project, user, projectRoleFromUser(user));
+            String role = existing.map(com.neuroforge.backend.entity.ProjectMemberAssignment::getProjectRole)
+                    .orElseGet(() -> projectRoleFromUser(user));
+            syncTeamMember(project, user, role);
+        }
+        if (projectMembersChanged) {
+            projectRepository.save(project);
         }
     }
 
     private void syncTeamMember(Project project, User user, String projectRole) {
         if (project.getTeam() == null || user == null) return;
+        if (!isAssignableProjectRole(projectRole)) return;
         String normalized = normalizeProjectRole(projectRole);
         TeamMember member = teamMemberRepository.findByTeamIdAndUserId(project.getTeam().getId(), user.getId())
                 .orElseGet(() -> {
@@ -564,6 +587,11 @@ public class ProjectService {
                 });
         member.setTeamRole(normalized);
         teamMemberRepository.save(member);
+    }
+
+    private boolean isAssignableProjectRole(String value) {
+        if (value == null) return false;
+        return Set.of("Team Lead", "Developer", "Tester", "QA").contains(normalizeProjectRole(value));
     }
 
     private String projectRoleFromUser(User user) {
@@ -625,6 +653,9 @@ public class ProjectService {
                 teamMemberRepository.findByTeamIdAndUserId(team.getId(), user.getId())
                         .ifPresent(teamMemberRepository::delete);
             }
+        }
+        for (User user : removed) {
+            projectMemberAssignmentRepository.deleteByProjectIdAndUserId(project.getId(), user.getId());
         }
 
         project.getMembers().clear();

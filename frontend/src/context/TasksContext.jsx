@@ -1,15 +1,25 @@
-import { createContext, useContext, useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { getApiBase } from "../services/api.js";
 import { canAccessTask, canAccessSubtask } from "../utils/access.js";
-
-const TasksContext = createContext(null);
+import { TasksContext } from "./TasksContextStore.js";
 
 const API_BASE = `${getApiBase()}/tasks`;
 
-export const SEED_TASKS = [];
+const normalizeTask = (task) => {
+  if (!task) return task;
+  const projId = task.projectId ?? task.project?.id ?? task.project_id ?? null;
+  const assId = task.assigneeId ?? task.assignee?.id ?? task.assignee_id ?? null;
+  return { ...task, projectId: projId ? Number(projId) : null, assigneeId: assId ? Number(assId) : null };
+};
 
-export const SEED_SUBTASKS = [];
+const normalizeSubtask = (subtask) => ({
+  ...subtask,
+  id: Number(subtask.id),
+  taskId: Number(subtask.taskId ?? subtask.task?.id),
+  assigneeId: subtask.assigneeId == null ? null : Number(subtask.assigneeId ?? subtask.assignee?.id),
+  teamId: subtask.teamId == null ? null : Number(subtask.teamId ?? subtask.team?.id),
+});
 
 export const TasksProvider = ({ children }) => {
   const [tasks, setTasks] = useState([]);
@@ -17,22 +27,7 @@ export const TasksProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const normalizeTask = (task) => {
-    if (!task) return task;
-    const projId = task.projectId ?? task.project?.id ?? task.project_id ?? null;
-    const assId = task.assigneeId ?? task.assignee?.id ?? task.assignee_id ?? null;
-    return { ...task, projectId: projId ? Number(projId) : null, assigneeId: assId ? Number(assId) : null };
-  };
-
-  const normalizeSubtask = (subtask) => ({
-    ...subtask,
-    id: Number(subtask.id),
-    taskId: Number(subtask.taskId ?? subtask.task?.id),
-    assigneeId: subtask.assigneeId == null ? null : Number(subtask.assigneeId ?? subtask.assignee?.id),
-    teamId: subtask.teamId == null ? null : Number(subtask.teamId ?? subtask.team?.id),
-  });
-
-  const fetchTasks = async () => {
+  const fetchTasks = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
@@ -56,15 +51,24 @@ export const TasksProvider = ({ children }) => {
           setSubtasks([]);
         }
       }
-    } catch (err) {
+    } catch {
       setTasks([]);
       setSubtasks([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  useEffect(() => { fetchTasks(); }, []);
+  useEffect(() => {
+    let active = true;
+    Promise.resolve().then(() => {
+      if (active) return fetchTasks();
+      return undefined;
+    });
+    return () => {
+      active = false;
+    };
+  }, [fetchTasks]);
 
   const buildPayload = (formData) => ({
     title: formData.title,
@@ -201,8 +205,8 @@ export const TasksProvider = ({ children }) => {
       currentUser = currentUserRaw
         ? JSON.parse(currentUserRaw)
         : null;
-    } catch (e) {
-      currentUser = null;
+    } catch (error) {
+      console.warn("Ignoring invalid stored user profile:", error);
     }
 
     const role = currentUser?.role
@@ -403,7 +407,11 @@ export const TasksProvider = ({ children }) => {
 
     const currentUserRaw = sessionStorage.getItem("auth_user") || localStorage.getItem("auth_user");
     let currentUser = null;
-    try { currentUser = currentUserRaw ? JSON.parse(currentUserRaw) : null; } catch { currentUser = null; }
+    try {
+      currentUser = currentUserRaw ? JSON.parse(currentUserRaw) : null;
+    } catch (error) {
+      console.warn("Ignoring invalid stored user profile:", error);
+    }
     const role = String(currentUser?.role || "").toUpperCase();
     const isExecutionRole = ["DEVELOPER", "TESTER", "QA", "TEAM_MEMBER"].includes(role);
 
@@ -547,6 +555,3 @@ export const TasksProvider = ({ children }) => {
     </TasksContext.Provider>
   );
 };
-
-export const useTasks = () =>
-  useContext(TasksContext);

@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   PiUserCircle,
   PiBell,
@@ -17,7 +17,6 @@ import {
   PiLockKey,
   PiMonitor,
   PiGearSix,
-  PiSignOut,
 } from "react-icons/pi";
 
 import "./Settings.css";

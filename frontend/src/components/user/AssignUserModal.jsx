@@ -1,22 +1,12 @@
 import { useState } from "react";
 import { PiX, PiFolder, PiBriefcase, PiUserPlus } from "react-icons/pi";
+import { normalizeRole, ROLES, formatRole } from "../../constants/roles.js";
 
-// Project Lead and Project Manager are set when the project is created.
-// The backend only accepts these four roles for project members.
-const PROJECT_ROLES = ["Developer", "Team Lead", "Tester", "QA"];
-
-// The backend requires the project role to match the user's system role,
-// so start with the role that matches this user.
-const defaultRoleForUser = (user) => {
-  const key = String(user?.role || "")
-    .trim()
-    .toLowerCase()
-    .replace(/[\s-]+/g, "_");
-
-  if (key === "team_lead") return "Team Lead";
-  if (key === "tester") return "Tester";
-  if (key === "qa") return "QA";
-  return "Developer";
+const PROJECT_ROLES_BY_SYSTEM_ROLE = {
+  [ROLES.DEVELOPER]: ["Developer"],
+  [ROLES.TEAM_LEAD]: ["Team Lead"],
+  [ROLES.TESTER]: ["Tester"],
+  [ROLES.QA]: ["QA"],
 };
 
 const AssignUserModal = ({
@@ -27,10 +17,14 @@ const AssignUserModal = ({
   currentAssignments = [],
   onAssign,
 }) => {
+  const systemRole = normalizeRole(user?.role);
+  const projectRoles = PROJECT_ROLES_BY_SYSTEM_ROLE[systemRole] || [];
+  const isLegacyTeamMember =
+    String(user?.role || "").trim().toUpperCase().replace(/[\s-]+/g, "_") === "TEAM_MEMBER";
   const [selectedProjectId, setSelectedProjectId] = useState(
     projects.length > 0 ? String(projects[0].id) : ""
   );
-  const [selectedRole, setSelectedRole] = useState(defaultRoleForUser(user));
+  const [selectedRole, setSelectedRole] = useState(projectRoles[0] || "");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -111,7 +105,7 @@ const AssignUserModal = ({
               </div>
             </div>
             <span className="rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
-              System Role: {user.role || "Member"}
+              System Role: {isLegacyTeamMember ? "Team Member" : formatRole(user?.role)}
             </span>
           </div>
 
@@ -154,24 +148,36 @@ const AssignUserModal = ({
             </select>
           </div>
 
-          {/* Project Role Selection */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-              Assigned Project Role <span className="text-rose-500">*</span>
-            </label>
-            <select
-              value={selectedRole}
-              onChange={(e) => setSelectedRole(e.target.value)}
-              required
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-            >
-              {PROJECT_ROLES.map((r) => (
-                <option key={r} value={r} className="dark:bg-slate-800 dark:text-white">
-                  {r}
-                </option>
-              ))}
-            </select>
-          </div>
+          {/* Project membership roles are distinct from project ownership roles. */}
+          {projectRoles.length > 0 ? (
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Assigned Project Role <span className="text-rose-500">*</span>
+              </label>
+              <select
+                value={selectedRole}
+                onChange={(e) => setSelectedRole(e.target.value)}
+                required
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              >
+                {projectRoles.map((role) => (
+                  <option key={role} value={role} className="dark:bg-slate-800 dark:text-white">
+                    {role}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300">
+              {systemRole === ROLES.PROJECT_MANAGER
+                ? "Project Manager is assigned through the project settings, not as a project member."
+                : systemRole === ROLES.PROJECT_LEAD
+                  ? "Project Lead is assigned through the project settings, not as a project member."
+                  : systemRole === ROLES.ADMIN
+                    ? "Admin users are assigned as a Project Manager or Project Lead through project settings."
+                    : "Assign this user a system role before adding them as a project member."}
+            </p>
+          )}
 
           {/* Actions */}
           <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
@@ -184,7 +190,7 @@ const AssignUserModal = ({
             </button>
             <button
               type="submit"
-              disabled={isSubmitting || !selectedProjectId}
+              disabled={isSubmitting || !selectedProjectId || !selectedRole}
               className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-md shadow-blue-500/20 transition hover:brightness-110 disabled:opacity-50"
             >
               <PiBriefcase size={15} />

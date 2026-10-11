@@ -1,4 +1,4 @@
-import { useAuth } from "../context/AuthContext.jsx";
+import { useAuth } from "../context/AuthContextStore.js";
 import { normalizeRole, ROLES, MEMBER_ROLES } from "../constants/roles.js";
 import { hasRolePermission } from "../constants/permissions.js";
 

@@ -142,7 +142,8 @@ const DeveloperPerformance = ({
   }, [projects]);
 
   const period = periods.find((item) => item.id === periodId) || periods[1];
-  const since = period.days ? Date.now() - period.days * 86400000 : 0;
+  const [now] = useState(() => Date.now());
+  const since = period.days ? now - period.days * 86400000 : 0;
   const inPeriod = (value) =>
     !since || (value && new Date(value).getTime() >= since);
 

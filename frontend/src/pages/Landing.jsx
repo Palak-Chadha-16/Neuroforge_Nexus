@@ -12,7 +12,7 @@ import {
   PiSun,
   PiMoon,
 } from "react-icons/pi";
-import { useTheme } from "../context/ThemeContext.jsx";
+import { useTheme } from "../context/ThemeContextStore.js";
 import "./Landing.css";
 
 export default function Landing() {

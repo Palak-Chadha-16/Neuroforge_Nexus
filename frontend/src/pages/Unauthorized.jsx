@@ -1,6 +1,6 @@
 import { Link, useNavigate } from "react-router-dom";
 import { PiShieldWarning, PiArrowLeft, PiHouse } from "react-icons/pi";
-import { useAuth } from "../context/AuthContext.jsx";
+import { useAuth } from "../context/AuthContextStore.js";
 import { formatRole } from "../constants/roles.js";
 
 const Unauthorized = () => {

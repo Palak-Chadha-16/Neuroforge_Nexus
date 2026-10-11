@@ -1,18 +1,11 @@
 import { useState, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
-  PiArrowLeft,
-  PiCalendarBlank,
   PiCaretLeft,
   PiCaretRight,
-  PiClock,
-  PiUserCircle,
-  PiCheckCircle,
 } from "react-icons/pi";
-import { useTasks } from "../../context/TasksContext.jsx";
-import { useUsers } from "../../context/UsersContext.jsx";
-import { useAuth } from "../../context/AuthContext.jsx";
-import { usePermission } from "../../hooks/usePermission.js";
+import { useTasks } from "../../context/TasksContextStore.js";
+import { useAuth } from "../../context/AuthContextStore.js";
 import { canRescheduleSubtask } from "../../utils/access.js";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -28,7 +21,6 @@ const SubtaskCalendar = () => {
   const { projectId, taskId, subtaskId } = useParams();
   const navigate = useNavigate();
   const { currentUser } = useAuth();
-  const { can } = usePermission();
 
   const {
     getTaskById,
@@ -36,7 +28,6 @@ const SubtaskCalendar = () => {
     updateSubtask,
   } = useTasks();
 
-  const { users } = useUsers();
 
   const parentTask = getTaskById(taskId);
   const subtasks = getSubtasksByTaskId(taskId);

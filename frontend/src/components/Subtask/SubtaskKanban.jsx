@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   PiArrowLeft,
@@ -10,12 +10,12 @@ import {
   PiListBullets,
 } from "react-icons/pi";
 
-import { useTasks } from "../../context/TasksContext.jsx";
-import { useUsers } from "../../context/UsersContext.jsx";
-import { useAuth } from "../../context/AuthContext.jsx";
-import { useProjects } from "../../context/ProjectContext.jsx";
-import { useProjectTeam } from "../../context/ProjectTeamContext.jsx";
-import { useTeams } from "../../context/TeamsContext.jsx";
+import { useTasks } from "../../context/TasksContextStore.js";
+import { useUsers } from "../../context/UsersContextStore.js";
+import { useAuth } from "../../context/AuthContextStore.js";
+import { useProjects } from "../../context/ProjectContextStore.js";
+import { useProjectTeam } from "../../context/ProjectTeamContextStore.js";
+import { useTeams } from "../../context/TeamsContextStore.js";
 import { canMoveSubtaskKanban } from "../../utils/access.js";
 import SubtaskTimelineView from "./SubtaskTimelineView.jsx";
 import SubtaskListView from "./SubtaskListView.jsx";
@@ -65,21 +65,16 @@ const SubtaskKanban = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const urlView = searchParams.get("view");
 
-  const [viewMode, setViewMode] = useState(() => {
-    if (urlView && ["board", "timeline", "list"].includes(urlView)) {
-      return urlView;
-    }
+  const [storedViewMode, setStoredViewMode] = useState(() => {
     return localStorage.getItem("subtask_kanban_view_mode") || "board";
   });
-
-  useEffect(() => {
-    if (urlView && ["board", "timeline", "list"].includes(urlView)) {
-      setViewMode(urlView);
-    }
-  }, [urlView]);
+  const viewMode =
+    urlView && ["board", "timeline", "list"].includes(urlView)
+      ? urlView
+      : storedViewMode;
 
   const handleViewModeChange = (mode) => {
-    setViewMode(mode);
+    setStoredViewMode(mode);
     try {
       localStorage.setItem("subtask_kanban_view_mode", mode);
     } catch {
@@ -102,6 +97,11 @@ const SubtaskKanban = () => {
   const { teams = [] } = useTeams();
 
   const project = getProjectById(projectId);
+  const parentTask = useMemo(() => getTaskById(taskId), [getTaskById, taskId]);
+  const subtasks = useMemo(
+    () => getSubtasksByTaskId(taskId),
+    [getSubtasksByTaskId, taskId]
+  );
 
   const [draggedSubtaskId, setDraggedSubtaskId] =
     useState(null);
@@ -138,14 +138,6 @@ const SubtaskKanban = () => {
       </div>
     );
   }
-
-  const parentTask = useMemo(() => {
-    return getTaskById(taskId);
-  }, [getTaskById, taskId]);
-
-  const subtasks = useMemo(() => {
-    return getSubtasksByTaskId(taskId);
-  }, [getSubtasksByTaskId, taskId]);
 
   const getAssignee = (assigneeId) => {
     return users.find(

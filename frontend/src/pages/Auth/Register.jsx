@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import AuthLayout from "../../components/Auth/AuthLayout.jsx";
-import { useAuth } from "../../context/AuthContext.jsx";
+import { useAuth } from "../../context/AuthContextStore.js";
 
 const Register = () => {
   const navigate = useNavigate();
@@ -106,7 +106,7 @@ const Register = () => {
       }
 
       navigate("/dashboard");
-    } catch (err) {
+    } catch {
       setMessage("An unexpected error occurred during account creation.");
       setIsSubmitting(false);
     }

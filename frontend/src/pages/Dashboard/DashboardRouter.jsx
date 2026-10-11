@@ -1,4 +1,4 @@
-import { useAuth } from "../../context/AuthContext.jsx";
+import { useAuth } from "../../context/AuthContextStore.js";
 import { normalizeRole, ROLES } from "../../constants/roles.js";
 import AdminDashboard from "./roles/AdminDashboard.jsx";
 import ProjectManagerDashboard from "./roles/ProjectManagerDashboard.jsx";

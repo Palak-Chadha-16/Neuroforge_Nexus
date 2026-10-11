@@ -13,10 +13,13 @@ import org.springframework.transaction.annotation.Transactional;
 import com.neuroforge.backend.dto.TeamDtos;
 import com.neuroforge.backend.dto.TeamRequest;
 import com.neuroforge.backend.entity.Project;
+import com.neuroforge.backend.entity.ProjectMemberAssignment;
+import com.neuroforge.backend.entity.Role;
 import com.neuroforge.backend.entity.Team;
 import com.neuroforge.backend.entity.TeamMember;
 import com.neuroforge.backend.entity.User;
 import com.neuroforge.backend.exception.BusinessRuleException;
+import com.neuroforge.backend.repository.ProjectMemberAssignmentRepository;
 import com.neuroforge.backend.repository.ProjectRepository;
 import com.neuroforge.backend.repository.TeamMemberRepository;
 import com.neuroforge.backend.repository.TeamRepository;
@@ -37,12 +40,11 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class TeamService {
 
-    private static final String DEFAULT_TEAM_ROLE = "Member";
-
     private final TeamRepository teamRepository;
     private final TeamMemberRepository teamMemberRepository;
     private final UserRepository userRepository;
     private final ProjectRepository projectRepository;
+    private final ProjectMemberAssignmentRepository projectMemberAssignmentRepository;
     private final AccessService access;
 
     // ------------------------------------------------------------------ teams
@@ -82,15 +84,13 @@ public class TeamService {
         if (request == null || request.getName() == null || request.getName().isBlank()) {
             throw new IllegalArgumentException("Team name is required");
         }
-
-        Project project = null;
-        if (request.getProjectId() != null) {
-            project = projectRepository.findById(request.getProjectId())
-                    .orElseThrow(() -> new EntityNotFoundException("Project not found with id " + request.getProjectId()));
-            access.assertCanManage(user, project);
-        } else if (!user.isAdmin()) {
-            throw new IllegalArgumentException("Project is required for non-admin team creation");
+        if (request.getProjectId() == null) {
+            throw new IllegalArgumentException("Project is required for team creation");
         }
+
+        Project project = projectRepository.findById(request.getProjectId())
+                .orElseThrow(() -> new EntityNotFoundException("Project not found with id " + request.getProjectId()));
+        access.assertCanManage(user, project);
 
         String teamCode = request.getTeamCode() == null || request.getTeamCode().isBlank()
                 ? nextTeamCode()
@@ -108,7 +108,7 @@ public class TeamService {
 
         if (request.getMemberIds() != null) {
             for (User member : resolveUsers(request.getMemberIds())) {
-                attach(team, project, member, DEFAULT_TEAM_ROLE);
+                attach(team, project, member, teamRoleForSystemRole(member));
             }
         }
 
@@ -172,6 +172,7 @@ public class TeamService {
     public TeamDtos.MemberInfo addMember(Long teamId, Long userId, String teamRole) {
         Team team = find(teamId);
         assertCanManage(CurrentUser.get(), team);
+        requireProject(team);
 
         if (userId == null) {
             throw new IllegalArgumentException("userId is required");
@@ -183,7 +184,8 @@ public class TeamService {
             throw new BusinessRuleException("User is already a member of this team");
         }
 
-        String role = teamRole == null || teamRole.isBlank() ? DEFAULT_TEAM_ROLE : teamRole.trim();
+        String role = validateTeamRole(user, teamRole);
+        assertTeamLeadAvailable(team.getProject(), userId, role);
         return TeamDtos.MemberInfo.from(attach(team, team.getProject(), user, role));
     }
 
@@ -191,14 +193,25 @@ public class TeamService {
     public TeamDtos.MemberInfo updateMemberRole(Long teamId, Long userId, String teamRole) {
         Team team = find(teamId);
         assertCanManage(CurrentUser.get(), team);
-
-        if (teamRole == null || teamRole.isBlank()) {
-            throw new IllegalArgumentException("Team role is required");
-        }
+        requireProject(team);
 
         TeamMember member = teamMemberRepository.findByTeamIdAndUserId(teamId, userId)
                 .orElseThrow(() -> new EntityNotFoundException("This user is not a member of the team"));
-        member.setTeamRole(teamRole.trim());
+        User user = member.getUser();
+        if (teamRole == null || teamRole.isBlank()) {
+            throw new IllegalArgumentException("Team role is required");
+        }
+        String role = validateTeamRole(user, teamRole);
+        assertTeamLeadAvailable(team.getProject(), userId, role);
+        String previousRole = member.getTeamRole();
+        member.setTeamRole(role);
+        projectMemberAssignmentRepository.findByProjectIdAndUserId(team.getProject().getId(), userId)
+                .ifPresent(assignment -> {
+                    if (assignment.getProjectRole().equalsIgnoreCase(previousRole)) {
+                        assignment.setProjectRole(role);
+                        projectMemberAssignmentRepository.save(assignment);
+                    }
+                });
         return TeamDtos.MemberInfo.from(teamMemberRepository.save(member));
     }
 
@@ -219,17 +232,86 @@ public class TeamService {
                 .orElseThrow(() -> new EntityNotFoundException("Team not found with id " + id));
     }
 
-    /** Adds the user to the team and to the team's project (so the project/tasks are visible to them). */
+    private void requireProject(Team team) {
+        if (team.getProject() == null) {
+            throw new BusinessRuleException("A project is required for team membership");
+        }
+    }
+
+    /** Adds the user to both memberships without overwriting an existing project assignment. */
     private TeamMember attach(Team team, Project project, User user, String teamRole) {
-        if (project != null && !access.isMember(project, user.getId())) {
+        if (project == null) {
+            throw new BusinessRuleException("A project is required for team membership");
+        }
+        if (!user.isActive()) {
+            throw new BusinessRuleException("Inactive users cannot be assigned to a team");
+        }
+        String role = validateTeamRole(user, teamRole);
+
+        if (project.getMembers().stream().noneMatch(member -> member.getId().equals(user.getId()))) {
             project.getMembers().add(user);
+            projectRepository.save(project);
+        }
+
+        if (projectMemberAssignmentRepository.findByProjectIdAndUserId(project.getId(), user.getId()).isEmpty()) {
+            ProjectMemberAssignment assignment = new ProjectMemberAssignment();
+            assignment.setProject(project);
+            assignment.setUser(user);
+            assignment.setProjectRole(role);
+            assignment.setMemberStatus("Active");
+            projectMemberAssignmentRepository.save(assignment);
         }
 
         TeamMember member = new TeamMember();
         member.setTeam(team);
         member.setUser(user);
-        member.setTeamRole(teamRole);
+        member.setTeamRole(role);
         return teamMemberRepository.save(member);
+    }
+
+    private String validateTeamRole(User user, String value) {
+        String role = value == null || value.isBlank()
+                ? teamRoleForSystemRole(user)
+                : switch (value.trim().replace('_', ' ').replace('-', ' ').toLowerCase()) {
+                    case "team lead" -> "Team Lead";
+                    case "developer" -> "Developer";
+                    case "tester" -> "Tester";
+                    case "qa" -> "QA";
+                    default -> throw new BusinessRuleException(
+                            "Team role must be Team Lead, Developer, Tester or QA");
+                };
+        Role systemRole = user.getRole();
+        boolean matches = switch (role) {
+            case "Team Lead" -> systemRole == Role.TEAM_LEAD;
+            case "Developer" -> systemRole == Role.DEVELOPER || systemRole == Role.TEAM_MEMBER;
+            case "Tester" -> systemRole == Role.TESTER;
+            case "QA" -> systemRole == Role.QA;
+            default -> false;
+        };
+        if (!matches) {
+            throw new BusinessRuleException(
+                    "Team role " + role + " does not match the user's system role " + systemRole.getLabel());
+        }
+        return role;
+    }
+
+    private String teamRoleForSystemRole(User user) {
+        return switch (user.getRole()) {
+            case TEAM_LEAD -> "Team Lead";
+            case TESTER -> "Tester";
+            case QA -> "QA";
+            case DEVELOPER, TEAM_MEMBER -> "Developer";
+            default -> throw new BusinessRuleException(
+                    "Only Team Leads, Developers, Testers and QA users can be assigned to a team");
+        };
+    }
+
+    private void assertTeamLeadAvailable(Project project, Long userId, String teamRole) {
+        if ("Team Lead".equals(teamRole)
+                && projectMemberAssignmentRepository.existsByProjectIdAndProjectRoleIgnoreCaseAndUserIdNot(
+                        project.getId(), "Team Lead", userId)) {
+            throw new BusinessRuleException("This project already has a Team Lead");
+        }
     }
 
     private Set<User> resolveUsers(List<Long> ids) {

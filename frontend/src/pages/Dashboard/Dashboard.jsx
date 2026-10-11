@@ -1,6 +1,6 @@
-import { useAuth } from "../../context/AuthContext.jsx";
-import { useTasks } from "../../context/TasksContext.jsx";
-import { useProjects } from "../../context/ProjectContext.jsx";
+import { useAuth } from "../../context/AuthContextStore.js";
+import { useTasks } from "../../context/TasksContextStore.js";
+import { useProjects } from "../../context/ProjectContextStore.js";
 import { ROLES, normalizeRole } from "../../constants/roles.js";
 import StatCard from "../../components/dashboard/StatCard.jsx";
 import TaskOverviewChart from "../../components/dashboard/TaskOverviewChart.jsx";

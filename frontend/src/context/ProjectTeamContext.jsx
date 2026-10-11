@@ -1,10 +1,14 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { getApiBase } from "../services/api.js";
+import { MEMBER_STATUSES, ProjectTeamContext } from "./ProjectTeamContextStore.js";
 
 const API_BASE = getApiBase();
-const ProjectTeamContext = createContext(null);
-export const MEMBER_STATUSES = ["Active", "Inactive", "In Meeting"];
+const getErrorMessage = (error, fallback) =>
+  error.response?.data?.message ||
+  error.response?.data?.detail ||
+  error.message ||
+  fallback;
 
 const normalizeMember = (member) => ({
   id: member.id,
@@ -15,41 +19,24 @@ const normalizeMember = (member) => ({
   email: member.email ?? member.user?.email ?? "",
 });
 
-export const SEED_PROJECT_MEMBERS = {
-  "1": [
-    { id: 1, userId: 2, projectRole: "Project Manager", status: "Active", fullName: "Sarah Jenkins", email: "pm@neuroforge.io" },
-    { id: 2, userId: 3, projectRole: "Project Lead", status: "Active", fullName: "David Chen", email: "lead@neuroforge.io" },
-    { id: 3, userId: 4, projectRole: "Team Lead", status: "Active", fullName: "Elena Rostova", email: "teamlead@neuroforge.io" },
-    { id: 4, userId: 5, projectRole: "Developer", status: "Active", fullName: "Marcus Vance", email: "dev@neuroforge.io" },
-    { id: 5, userId: 6, projectRole: "Tester", status: "Active", fullName: "Aisha Patel", email: "tester@neuroforge.io" },
-  ],
-  "2": [
-    { id: 6, userId: 2, projectRole: "Project Manager", status: "Active", fullName: "Sarah Jenkins", email: "pm@neuroforge.io" },
-    { id: 7, userId: 3, projectRole: "Project Lead", status: "Active", fullName: "David Chen", email: "lead@neuroforge.io" },
-    { id: 8, userId: 5, projectRole: "Developer", status: "Active", fullName: "Marcus Vance", email: "dev@neuroforge.io" },
-    { id: 9, userId: 7, projectRole: "QA", status: "In Meeting", fullName: "Liam O'Connor", email: "qa@neuroforge.io" },
-  ],
-  "3": [
-    { id: 10, userId: 1, projectRole: "Admin", status: "Active", fullName: "Alexander Wright", email: "admin@neuroforge.io" },
-    { id: 11, userId: 3, projectRole: "Project Lead", status: "Active", fullName: "David Chen", email: "lead@neuroforge.io" },
-    { id: 12, userId: 5, projectRole: "Developer", status: "Active", fullName: "Marcus Vance", email: "dev@neuroforge.io" },
-  ],
-};
-
 export const ProjectTeamProvider = ({ children }) => {
   const [projectTeams, setProjectTeams] = useState({});
+  const [error, setError] = useState("");
 
   const loadProjectMembers = useCallback(async (projectId) => {
     if (!projectId) return [];
     try {
-            const { data } = await axios.get(`${API_BASE}/projects/${projectId}/members`);
-      const normalized = (Array.isArray(data) ? data : []).map(normalizeMember);
+      const { data } = await axios.get(`${API_BASE}/projects/${projectId}/members`);
+      if (!Array.isArray(data)) {
+        throw new Error("Project members response was invalid.");
+      }
+      const normalized = data.map(normalizeMember);
       setProjectTeams((prev) => ({ ...prev, [String(projectId)]: normalized }));
+      setError("");
       return normalized;
     } catch (error) {
-            const fallback = (SEED_PROJECT_MEMBERS[String(projectId)] || []).map(normalizeMember);
-      setProjectTeams((prev) => ({ ...prev, [String(projectId)]: fallback }));
-      return fallback;
+      setError(getErrorMessage(error, "Project members could not be loaded."));
+      throw error;
     }
   }, []);
 
@@ -57,24 +44,13 @@ export const ProjectTeamProvider = ({ children }) => {
     const load = async () => {
       try {
         const { data } = await axios.get(`${API_BASE}/projects`);
-        const projects = Array.isArray(data) ? data : [];
-        if (projects.length > 0) {
-          await Promise.all(projects.map((p) => loadProjectMembers(p.id)));
-        } else {
-          // Hydrate from SEED_PROJECT_MEMBERS if no projects returned
-          const initial = {};
-          Object.entries(SEED_PROJECT_MEMBERS).forEach(([projId, members]) => {
-            initial[String(projId)] = members.map(normalizeMember);
-          });
-          setProjectTeams((prev) => (Object.keys(prev).length > 0 ? prev : initial));
+        if (!Array.isArray(data)) {
+          throw new Error("Projects response was invalid.");
         }
+        await Promise.all(data.map((project) => loadProjectMembers(project.id)));
+        setError("");
       } catch (error) {
-        console.warn("Backend offline: Hydrating project teams from seed data:", error.message);
-        const initial = {};
-        Object.entries(SEED_PROJECT_MEMBERS).forEach(([projId, members]) => {
-          initial[String(projId)] = members.map(normalizeMember);
-        });
-        setProjectTeams((prev) => (Object.keys(prev).length > 0 ? prev : initial));
+        setError(getErrorMessage(error, "Project members could not be loaded."));
       }
     };
     load();
@@ -87,93 +63,66 @@ export const ProjectTeamProvider = ({ children }) => {
     return entry ? entry[0] : null;
   }, [projectTeams]);
 
-  const addProjectMember = async (projectId, userId, projectRole) => {
+  const addProjectMember = useCallback(async (projectId, userId, projectRole) => {
     try {
-            const { data } = await axios.post(`${API_BASE}/projects/${projectId}/members`, { userId: Number(userId), projectRole, status: "Active" });
+      const { data } = await axios.post(`${API_BASE}/projects/${projectId}/members`, { userId: Number(userId), projectRole });
       await loadProjectMembers(projectId);
+      setError("");
       return { success: true, data: normalizeMember(data) };
     } catch (error) {
-            const newMember = normalizeMember({
-        id: Date.now(),
-        userId: Number(userId),
-        projectRole,
-        status: "Active",
-      });
-      setProjectTeams((prev) => {
-        const existing = prev[String(projectId)] || [];
-        const filtered = existing.filter((m) => String(m.userId) !== String(userId));
-        return {
-          ...prev,
-          [String(projectId)]: [...filtered, newMember],
-        };
-      });
-      return { success: true, data: newMember };
+      const message = getErrorMessage(error, "Failed to assign project member.");
+      setError(message);
+      return { success: false, message };
     }
-  };
+  }, [loadProjectMembers]);
 
-  const updateProjectMember = async (projectId, userId, projectRole) => {
+  const updateProjectMember = useCallback(async (projectId, userId, projectRole) => {
     try {
-            const { data } = await axios.put(`${API_BASE}/projects/${projectId}/members/${userId}`, { userId: Number(userId), projectRole });
+      const { data } = await axios.put(`${API_BASE}/projects/${projectId}/members/${userId}`, { projectRole });
       await loadProjectMembers(projectId);
+      setError("");
       return { success: true, data: normalizeMember(data) };
     } catch (error) {
-            setProjectTeams((prev) => {
-        const existing = prev[String(projectId)] || [];
-        return {
-          ...prev,
-          [String(projectId)]: existing.map((m) =>
-            String(m.userId) === String(userId) ? { ...m, projectRole } : m
-          ),
-        };
-      });
-      return { success: true, data: { userId, projectRole } };
+      const message = getErrorMessage(error, "Failed to update project member.");
+      setError(message);
+      return { success: false, message };
     }
-  };
+  }, [loadProjectMembers]);
 
-  const updateProjectMemberStatus = async (projectId, userId, status) => {
+  const updateProjectMemberStatus = useCallback(async (projectId, userId, status) => {
     if (!MEMBER_STATUSES.includes(status)) return { success: false, message: "Invalid member status." };
     try {
-            const { data } = await axios.patch(`${API_BASE}/projects/${projectId}/members/${userId}/status`, { status });
+      const { data } = await axios.patch(`${API_BASE}/projects/${projectId}/members/${userId}/status`, { status });
       await loadProjectMembers(projectId);
+      setError("");
       return { success: true, data: normalizeMember(data) };
     } catch (error) {
-            setProjectTeams((prev) => {
-        const existing = prev[String(projectId)] || [];
-        return {
-          ...prev,
-          [String(projectId)]: existing.map((m) =>
-            String(m.userId) === String(userId) ? { ...m, status } : m
-          ),
-        };
-      });
-      return { success: true, data: { userId, status } };
+      const message = getErrorMessage(error, "Failed to update project member status.");
+      setError(message);
+      return { success: false, message };
     }
-  };
+  }, [loadProjectMembers]);
 
-  const removeProjectMember = async (projectId, userId) => {
+  const removeProjectMember = useCallback(async (projectId, userId) => {
     try {
-            await axios.delete(`${API_BASE}/projects/${projectId}/members/${userId}`);
+      await axios.delete(`${API_BASE}/projects/${projectId}/members/${userId}`);
       await loadProjectMembers(projectId);
+      setError("");
       return { success: true };
     } catch (error) {
-            setProjectTeams((prev) => {
-        const existing = prev[String(projectId)] || [];
-        return {
-          ...prev,
-          [String(projectId)]: existing.filter((m) => String(m.userId) !== String(userId)),
-        };
-      });
-      return { success: true };
+      const message = getErrorMessage(error, "Failed to remove project member.");
+      setError(message);
+      return { success: false, message };
     }
-  };
+  }, [loadProjectMembers]);
 
-  const clearProjectTeam = (projectId) => setProjectTeams((prev) => {
+  const clearProjectTeam = useCallback((projectId) => setProjectTeams((prev) => {
     const next = { ...prev };
     delete next[String(projectId)];
     return next;
-  });
+  }), []);
 
-  const syncUserStatusAcrossTeams = (userId, status) => {
+  const syncUserStatusAcrossTeams = useCallback((userId, status) => {
     setProjectTeams((prev) => {
       const next = { ...prev };
       let changed = false;
@@ -188,10 +137,11 @@ export const ProjectTeamProvider = ({ children }) => {
       });
       return changed ? next : prev;
     });
-  };
+  }, []);
 
   const value = useMemo(() => ({
     projectTeams,
+    error,
     getProjectMembers,
     isUserAssignedToProject,
     getUserProjectId,
@@ -203,9 +153,20 @@ export const ProjectTeamProvider = ({ children }) => {
     clearProjectTeam,
     MEMBER_STATUSES,
     loadProjectMembers,
-  }), [projectTeams, getProjectMembers, isUserAssignedToProject, getUserProjectId, loadProjectMembers]);
+  }), [
+    projectTeams,
+    error,
+    getProjectMembers,
+    isUserAssignedToProject,
+    getUserProjectId,
+    addProjectMember,
+    updateProjectMember,
+    updateProjectMemberStatus,
+    syncUserStatusAcrossTeams,
+    removeProjectMember,
+    clearProjectTeam,
+    loadProjectMembers,
+  ]);
 
   return <ProjectTeamContext.Provider value={value}>{children}</ProjectTeamContext.Provider>;
 };
-
-export const useProjectTeam = () => useContext(ProjectTeamContext);

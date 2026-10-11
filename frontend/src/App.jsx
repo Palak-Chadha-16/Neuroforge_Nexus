@@ -11,12 +11,14 @@ import BugReporting from "./pages/Testing/BugReporting.jsx";
 import DevOpsManagement from "./pages/DevOps/DevOpsManagement.jsx";
 
 import { ThemeProvider } from "./context/ThemeContext.jsx";
-import { AuthProvider, useAuth } from "./context/AuthContext.jsx";
+import { AuthProvider } from "./context/AuthContext.jsx";
+import { useAuth } from "./context/AuthContextStore.js";
 import { UsersProvider } from "./context/UsersContext.jsx";
 import { TeamsProvider } from "./context/TeamsContext.jsx";
 import { ProjectProvider } from "./context/ProjectContext.jsx";
 import { ProjectTeamProvider } from "./context/ProjectTeamContext.jsx";
-import { TasksProvider, useTasks } from "./context/TasksContext.jsx";
+import { TasksProvider } from "./context/TasksContext.jsx";
+import { useTasks } from "./context/TasksContextStore.js";
 
 import ProtectedRoute from "./routes/ProtectedRoute.jsx";
 import RoleRoute from "./routes/RoleRoute.jsx";

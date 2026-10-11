@@ -1,33 +1,24 @@
-import { createContext, useContext, useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import axios from "axios";
 import { getApiBase } from "../services/api.js";
-
-const TeamsContext = createContext(null);
+import { TeamsContext } from "./TeamsContextStore.js";
+import { useAuth } from "./AuthContextStore.js";
 
 const API_BASE = getApiBase();
+const getErrorMessage = (error, fallback) =>
+  error.response?.data?.message ||
+  error.response?.data?.detail ||
+  error.message ||
+  fallback;
 
 export const TeamsProvider = ({ children }) => {
+  const { currentUser } = useAuth();
   const [teams, setTeams] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const getCurrentRole = () => {
-    try {
-      const storedUser =
-        sessionStorage.getItem("auth_user") ||
-        localStorage.getItem("auth_user");
-
-      if (!storedUser) return null;
-
-      const user = JSON.parse(storedUser);
-      return user?.role?.toUpperCase();
-    } catch {
-      return null;
-    }
-  };
-
-  const fetchTeams = async () => {
-    const role = getCurrentRole();
+  const fetchTeams = useCallback(async () => {
+    const role = currentUser?.role?.toUpperCase();
 
     // Teams are available only to ADMIN and PROJECT_MANAGER.
     if (
@@ -36,7 +27,7 @@ export const TeamsProvider = ({ children }) => {
     ) {
       setTeams([]);
       setLoading(false);
-      return;
+      return [];
     }
 
     setLoading(true);
@@ -47,50 +38,44 @@ export const TeamsProvider = ({ children }) => {
 
       const teamsWithMembers = await Promise.all(
         response.data.map(async (team) => {
-          try {
-                        const membersResponse = await axios.get(
-              `${API_BASE}/teams/${team.id}/members`
-            );
-
-            return {
-              ...team,
-              members: membersResponse.data,
-            };
-          } catch (memberError) {
-            console.error(
-              `Failed to fetch members for team ${team.id}:`,
-              memberError
-            );
-
-            return {
-              ...team,
-              members: [],
-            };
-          }
+          const membersResponse = await axios.get(
+            `${API_BASE}/teams/${team.id}/members`
+          );
+          return {
+            ...team,
+            members: membersResponse.data,
+          };
         })
       );
 
       setTeams(teamsWithMembers);
+      return teamsWithMembers;
     } catch (error) {
       console.error("Failed to fetch teams:", error);
-
-      setError(
-        error.response?.data?.message ||
-          "Teams could not be loaded."
-      );
+      setTeams([]);
+      setError(getErrorMessage(error, "Teams could not be loaded."));
+      return [];
     } finally {
       setLoading(false);
     }
-  };
+  }, [currentUser?.role]);
 
   useEffect(() => {
-    fetchTeams();
-  }, []);
+    let active = true;
+    Promise.resolve().then(() => {
+      if (active) return fetchTeams();
+      return undefined;
+    });
+    return () => {
+      active = false;
+    };
+  }, [fetchTeams]);
 
-  const createTeam = async (name) => {
+  const createTeam = async (name, projectId) => {
     try {
             await axios.post(`${API_BASE}/teams`, {
         name,
+        projectId,
         description: "",
       });
 
@@ -98,14 +83,7 @@ export const TeamsProvider = ({ children }) => {
 
       return { success: true };
     } catch (error) {
-      const message =
-        error.response?.data?.message ||
-        "Failed to create team.";
-
-      return {
-        success: false,
-        message,
-      };
+      return { success: false, message: getErrorMessage(error, "Failed to create team.") };
     }
   };
 
@@ -120,14 +98,7 @@ export const TeamsProvider = ({ children }) => {
 
       return { success: true };
     } catch (error) {
-      const message =
-        error.response?.data?.message ||
-        "Failed to update team.";
-
-      return {
-        success: false,
-        message,
-      };
+      return { success: false, message: getErrorMessage(error, "Failed to update team.") };
     }
   };
 
@@ -135,22 +106,11 @@ export const TeamsProvider = ({ children }) => {
     try {
             await axios.delete(`${API_BASE}/teams/${teamId}`);
 
-      setTeams((prev) =>
-        prev.filter(
-          (team) => team.id !== teamId
-        )
-      );
+      await fetchTeams();
 
       return { success: true };
     } catch (error) {
-      const message =
-        error.response?.data?.message ||
-        "Failed to delete team.";
-
-      return {
-        success: false,
-        message,
-      };
+      return { success: false, message: getErrorMessage(error, "Failed to delete team.") };
     }
   };
 
@@ -168,14 +128,7 @@ export const TeamsProvider = ({ children }) => {
 
       return { success: true };
     } catch (error) {
-      const message =
-        error.response?.data?.message ||
-        "Failed to add member.";
-
-      return {
-        success: false,
-        message,
-      };
+      return { success: false, message: getErrorMessage(error, "Failed to add member.") };
     }
   };
 
@@ -196,14 +149,7 @@ export const TeamsProvider = ({ children }) => {
 
       return { success: true };
     } catch (error) {
-      const message =
-        error.response?.data?.message ||
-        "Failed to update member.";
-
-      return {
-        success: false,
-        message,
-      };
+      return { success: false, message: getErrorMessage(error, "Failed to update member.") };
     }
   };
 
@@ -220,14 +166,7 @@ export const TeamsProvider = ({ children }) => {
 
       return { success: true };
     } catch (error) {
-      const message =
-        error.response?.data?.message ||
-        "Failed to remove member.";
-
-      return {
-        success: false,
-        message,
-      };
+      return { success: false, message: getErrorMessage(error, "Failed to remove member.") };
     }
   };
 
@@ -249,6 +188,3 @@ export const TeamsProvider = ({ children }) => {
     </TeamsContext.Provider>
   );
 };
-
-export const useTeams = () =>
-  useContext(TeamsContext);

@@ -1,9 +1,9 @@
 import { Navigate, useParams } from "react-router-dom";
-import { useAuth } from "../context/AuthContext.jsx";
-import { useProjects } from "../context/ProjectContext.jsx";
-import { useTasks } from "../context/TasksContext.jsx";
-import { useProjectTeam } from "../context/ProjectTeamContext.jsx";
-import { useTeams } from "../context/TeamsContext.jsx";
+import { useAuth } from "../context/AuthContextStore.js";
+import { useProjects } from "../context/ProjectContextStore.js";
+import { useTasks } from "../context/TasksContextStore.js";
+import { useProjectTeam } from "../context/ProjectTeamContextStore.js";
+import { useTeams } from "../context/TeamsContextStore.js";
 import { ROLES, normalizeRole } from "../constants/roles.js";
 import {
   canAccessProject,

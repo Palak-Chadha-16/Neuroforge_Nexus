@@ -12,10 +12,10 @@ import {
   PiWarningCircle,
 } from "react-icons/pi";
 import axios, { getApiBase } from "../../services/api.js";
-import { useUsers } from "../../context/UsersContext.jsx";
-import { useProjects } from "../../context/ProjectContext.jsx";
-import { useProjectTeam } from "../../context/ProjectTeamContext.jsx";
-import { useTasks } from "../../context/TasksContext.jsx";
+import { useUsers } from "../../context/UsersContextStore.js";
+import { useProjects } from "../../context/ProjectContextStore.js";
+import { useProjectTeam } from "../../context/ProjectTeamContextStore.js";
+import { useTasks } from "../../context/TasksContextStore.js";
 
 const API_BASE = getApiBase();
 
@@ -114,7 +114,7 @@ const UserDetails = () => {
     };
 
     fetchUserProfile();
-  }, [userId]);
+  }, [userId, allProjects, projectTeams, tasks, users]);
 
   const formatDate = (value) => {
     if (!value) return "—";

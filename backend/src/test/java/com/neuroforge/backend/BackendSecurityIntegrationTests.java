@@ -34,9 +34,11 @@ import com.neuroforge.backend.repository.BugReportActivityRepository;
 import com.neuroforge.backend.repository.BugReportCommentRepository;
 import com.neuroforge.backend.repository.BugReportRepository;
 import com.neuroforge.backend.repository.CalendarEventRepository;
+import com.neuroforge.backend.repository.ProjectMemberAssignmentRepository;
 import com.neuroforge.backend.repository.ProjectRepository;
 import com.neuroforge.backend.repository.SprintRepository;
 import com.neuroforge.backend.repository.TaskRepository;
+import com.neuroforge.backend.repository.TeamMemberRepository;
 import com.neuroforge.backend.repository.UserRepository;
 import com.neuroforge.backend.security.JwtService;
 
@@ -76,6 +78,12 @@ class BackendSecurityIntegrationTests {
 
     @Autowired
     private ProjectRepository projectRepository;
+
+    @Autowired
+    private TeamMemberRepository teamMemberRepository;
+
+    @Autowired
+    private ProjectMemberAssignmentRepository projectMemberAssignmentRepository;
 
     @Autowired
     private TaskRepository taskRepository;
@@ -531,6 +539,196 @@ class BackendSecurityIntegrationTests {
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.role").value("TESTER"));
+    }
+
+    @Test
+    void teamAssignmentsPersistAsProjectMembersWithValidatedRoles() throws Exception {
+        User projectManager = createUser(Role.PROJECT_MANAGER);
+        User teamLead = createUser(Role.TEAM_LEAD);
+        User developer = createUser(Role.DEVELOPER);
+        User inactiveDeveloper = createUser(Role.DEVELOPER);
+        inactiveDeveloper.setActive(false);
+        userRepository.saveAndFlush(inactiveDeveloper);
+        String managerToken = jwtService.generateToken(projectManager);
+
+        String projectBody = mockMvc.perform(post("/api/projects")
+                        .header("Authorization", "Bearer " + managerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"Team assignment %s","projectManagerId":%d}
+                                """.formatted(UUID.randomUUID(), projectManager.getId())))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long projectId = objectMapper.readTree(projectBody).get("id").asLong();
+
+        String userOptionsBody = mockMvc.perform(get("/api/users/options")
+                        .header("Authorization", "Bearer " + managerToken))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        var userOptions = objectMapper.readTree(userOptionsBody);
+        var optionRoles = new java.util.ArrayList<String>();
+        var optionUserIds = new java.util.ArrayList<Long>();
+        userOptions.forEach(option -> {
+            optionRoles.add(option.get("role").asText());
+            optionUserIds.add(option.get("id").asLong());
+        });
+        org.assertj.core.api.Assertions.assertThat(optionRoles)
+                .contains("TEAM_LEAD", "DEVELOPER");
+        org.assertj.core.api.Assertions.assertThat(optionUserIds)
+                .doesNotContain(inactiveDeveloper.getId());
+
+        String teamBody = mockMvc.perform(post("/api/teams")
+                        .header("Authorization", "Bearer " + managerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"projectId":%d,"name":"Delivery team"}
+                                """.formatted(projectId)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long teamId = objectMapper.readTree(teamBody).get("id").asLong();
+
+        mockMvc.perform(post("/api/teams/{teamId}/members", teamId)
+                        .header("Authorization", "Bearer " + managerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"userId":%d,"teamRole":"Team Lead"}
+                                """.formatted(teamLead.getId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.memberId").isNumber())
+                .andExpect(jsonPath("$.userId").value(teamLead.getId()))
+                .andExpect(jsonPath("$.fullName").value(teamLead.getFullName()))
+                .andExpect(jsonPath("$.teamRole").value("Team Lead"));
+
+        mockMvc.perform(post("/api/teams/{teamId}/members", teamId)
+                        .header("Authorization", "Bearer " + managerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"userId":%d,"teamRole":"Developer"}
+                                """.formatted(developer.getId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.teamRole").value("Developer"));
+
+        mockMvc.perform(post("/api/teams/{teamId}/members", teamId)
+                        .header("Authorization", "Bearer " + managerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"userId":%d,"teamRole":"Developer"}
+                                """.formatted(developer.getId())))
+                .andExpect(status().isConflict());
+
+        org.assertj.core.api.Assertions.assertThat(
+                projectMemberAssignmentRepository.findByProjectIdAndUserId(projectId, teamLead.getId()))
+                .hasValueSatisfying(assignment ->
+                        org.assertj.core.api.Assertions.assertThat(assignment.getProjectRole()).isEqualTo("Team Lead"));
+        org.assertj.core.api.Assertions.assertThat(
+                projectMemberAssignmentRepository.findByProjectIdAndUserId(projectId, developer.getId()))
+                .hasValueSatisfying(assignment ->
+                        org.assertj.core.api.Assertions.assertThat(assignment.getProjectRole()).isEqualTo("Developer"));
+
+        mockMvc.perform(get("/api/projects/{projectId}/members", projectId)
+                        .header("Authorization", "Bearer " + managerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2));
+
+        mockMvc.perform(get("/api/teams/{teamId}/members", teamId)
+                        .header("Authorization", "Bearer " + managerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[*].teamRole",
+                        org.hamcrest.Matchers.hasItems("Team Lead", "Developer")));
+
+        mockMvc.perform(put("/api/projects/{projectId}", projectId)
+                        .header("Authorization", "Bearer " + managerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"Updated team assignment project"}
+                                """))
+                .andExpect(status().isOk());
+        org.assertj.core.api.Assertions.assertThat(projectMemberAssignmentRepository
+                .findByProjectIdAndUserId(projectId, teamLead.getId())).isPresent();
+
+        mockMvc.perform(post("/api/teams/{teamId}/members", teamId)
+                        .header("Authorization", "Bearer " + managerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"userId":%d,"teamRole":"Manager"}
+                                """.formatted(teamLead.getId())))
+                .andExpect(status().isConflict());
+
+        mockMvc.perform(post("/api/teams/{teamId}/members", teamId)
+                        .header("Authorization", "Bearer " + jwtService.generateToken(caller))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"userId":%d,"teamRole":"Developer"}
+                                """.formatted(otherUser.getId())))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(put("/api/teams/{teamId}/members/{userId}", teamId, teamLead.getId())
+                        .header("Authorization", "Bearer " + managerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"teamRole":"Team Lead"}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.teamRole").value("Team Lead"));
+
+        mockMvc.perform(get("/api/projects/{projectId}/members", projectId)
+                        .header("Authorization", "Bearer " + managerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2));
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .delete("/api/teams/{teamId}/members/{userId}", teamId, teamLead.getId())
+                        .header("Authorization", "Bearer " + managerToken))
+                .andExpect(status().isNoContent());
+        org.assertj.core.api.Assertions.assertThat(teamMemberRepository
+                .findByTeamIdAndUserId(teamId, teamLead.getId())).isEmpty();
+        org.assertj.core.api.Assertions.assertThat(projectMemberAssignmentRepository
+                .findByProjectIdAndUserId(projectId, teamLead.getId())).isPresent();
+    }
+
+    @Test
+    void projectManagerOwnershipIsSeparateFromValidatedMemberRoles() throws Exception {
+        User projectManager = createUser(Role.PROJECT_MANAGER);
+        User tester = createUser(Role.TESTER);
+        String managerToken = jwtService.generateToken(projectManager);
+
+        String projectBody = mockMvc.perform(post("/api/projects")
+                        .header("Authorization", "Bearer " + managerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"Role separation %s"}
+                                """.formatted(UUID.randomUUID())))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long projectId = objectMapper.readTree(projectBody).get("id").asLong();
+
+        mockMvc.perform(get("/api/projects/{id}", projectId)
+                        .header("Authorization", "Bearer " + managerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.projectManager.id").value(projectManager.getId()));
+
+        mockMvc.perform(post("/api/projects/{projectId}/members", projectId)
+                        .header("Authorization", "Bearer " + managerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"userId":%d,"projectRole":"Project Manager"}
+                                """.formatted(projectManager.getId())))
+                .andExpect(status().isBadRequest());
+
+        mockMvc.perform(post("/api/projects/{projectId}/members", projectId)
+                        .header("Authorization", "Bearer " + managerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"userId":%d,"projectRole":"Tester"}
+                                """.formatted(tester.getId())))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.projectRole").value("Tester"));
+
+        mockMvc.perform(get("/api/projects/{projectId}/members", projectId)
+                        .header("Authorization", "Bearer " + managerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].projectRole").value("Tester"));
     }
 
     private User createUser(Role role) {

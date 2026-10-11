@@ -8,9 +8,9 @@ import {
   PiCheckCircle,
   PiCopy,
 } from "react-icons/pi";
-import { useAuth } from "../../context/AuthContext.jsx";
-import { useProjects } from "../../context/ProjectContext.jsx";
-import { useTasks } from "../../context/TasksContext.jsx";
+import { useAuth } from "../../context/AuthContextStore.js";
+import { useProjects } from "../../context/ProjectContextStore.js";
+import { useTasks } from "../../context/TasksContextStore.js";
 import axios, { getApiBase } from "../../services/api.js";
 
 const QUICK_PROMPTS = [

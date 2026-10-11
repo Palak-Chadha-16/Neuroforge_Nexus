@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import {
   PiCalendarBlank,
   PiClock,
@@ -114,10 +114,10 @@ const SubtaskTimelineView = ({
   const [statusFilter, setStatusFilter] = useState("All");
   const [priorityFilter, setPriorityFilter] = useState("All");
 
-  const getAssignee = (assigneeId) => {
+  const getAssignee = useCallback((assigneeId) => {
     if (!assigneeId) return null;
     return users.find((u) => String(u.id) === String(assigneeId));
-  };
+  }, [users]);
 
   // Filter subtasks
   const filteredSubtasks = useMemo(() => {
@@ -140,7 +140,7 @@ const SubtaskTimelineView = ({
 
       return matchesSearch && matchesStatus && matchesPriority;
     });
-  }, [subtasks, searchTerm, statusFilter, priorityFilter, users]);
+  }, [subtasks, searchTerm, statusFilter, priorityFilter, getAssignee]);
 
   // Group subtasks into timeline milestone categories
   const timelineGroups = useMemo(() => {

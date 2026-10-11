@@ -10,8 +10,8 @@ import {
   PiKanban,
 } from "react-icons/pi";
 
-import { useAuth } from "../../../context/AuthContext.jsx";
-import { useTasks } from "../../../context/TasksContext.jsx";
+import { useAuth } from "../../../context/AuthContextStore.js";
+import { useTasks } from "../../../context/TasksContextStore.js";
 import { formatRole } from "../../../constants/roles.js";
 import { getApiBase } from "../../../services/api.js";
 

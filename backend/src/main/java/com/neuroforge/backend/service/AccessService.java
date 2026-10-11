@@ -63,9 +63,10 @@ public class AccessService {
     }
 
     public boolean isTeamLead(Project project, Long userId) {
-        if (project.getTeam() == null || project.getTeam().getId() == null) return false;
+        if (project == null || project.getTeam() == null || project.getTeam().getId() == null
+                || project.getTeam().getMembers() == null) return false;
         return project.getTeam().getMembers().stream()
-                .anyMatch(member -> member.getUser().getId().equals(userId)
+                .anyMatch(member -> member.getUser() != null && member.getUser().getId().equals(userId)
                         && "Team Lead".equalsIgnoreCase(member.getTeamRole()));
     }
 
@@ -103,7 +104,7 @@ public class AccessService {
             case ADMIN -> true;
             case PROJECT_MANAGER -> isManager(project, user.userId());
             case PROJECT_LEAD -> isProjectLead(project, user.userId());
-            case TEAM_LEAD -> isTeamLead(project, user.userId()) || isMember(project, user.userId());
+            case TEAM_LEAD -> isTeamLead(project, user.userId());
             default -> false;
         };
     }

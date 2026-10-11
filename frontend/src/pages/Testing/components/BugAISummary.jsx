@@ -82,8 +82,16 @@ const BugAISummary = ({ bug, comments, activity, onGenerated }) => {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    setResult(null);
-    setCopied(false);
+    let active = true;
+    Promise.resolve().then(() => {
+      if (active) {
+        setResult(null);
+        setCopied(false);
+      }
+    });
+    return () => {
+      active = false;
+    };
   }, [bug.id]);
 
   const generate = async () => {

@@ -1,10 +1,10 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { useProjects } from "../../context/ProjectContext.jsx";
-import { useUsers } from "../../context/UsersContext.jsx";
-import { useTeams } from "../../context/TeamsContext.jsx";
-import { useProjectTeam } from "../../context/ProjectTeamContext.jsx";
-import { useAuth } from "../../context/AuthContext.jsx";
+import { useProjects } from "../../context/ProjectContextStore.js";
+import { useUsers } from "../../context/UsersContextStore.js";
+import { useTeams } from "../../context/TeamsContextStore.js";
+import { useProjectTeam } from "../../context/ProjectTeamContextStore.js";
+import { useAuth } from "../../context/AuthContextStore.js";
 import { usePermission } from "../../hooks/usePermission.js";
 import Can from "../../components/common/Can.jsx";
 import { ROLES, normalizeRole } from "../../constants/roles.js";
@@ -54,7 +54,7 @@ const ProjectManagement = () => {
     getVisibleProjects,
   } = useProjects();
 
-  const { users, loading: usersLoading, error: usersError } = useUsers();
+  const { users, error: usersError } = useUsers();
   const { teams, loading: teamsLoading, error: teamsError } = useTeams();
   const { projectTeams } = useProjectTeam();
 
@@ -108,6 +108,17 @@ const ProjectManagement = () => {
   );
 
   const currentRole = normalizeRole(currentUser?.role);
+  const activeUsers = users.filter((user) => user.status !== "Inactive");
+  const projectLeadUsers = activeUsers.filter((user) =>
+    [ROLES.PROJECT_LEAD, ROLES.ADMIN].includes(normalizeRole(user.role))
+  );
+  const projectManagerUsers = activeUsers.filter((user) =>
+    [ROLES.PROJECT_MANAGER, ROLES.ADMIN].includes(normalizeRole(user.role))
+  );
+  const selectableTeams = teams.filter((team) =>
+    !team.projectId ||
+    (editingProject && String(team.projectId) === String(editingProject.id))
+  );
 
   const showActions =
     (currentRole === ROLES.ADMIN || currentRole === ROLES.PROJECT_MANAGER) &&
@@ -285,6 +296,12 @@ const ProjectManagement = () => {
         </Can>
       </div>
 
+      {(projectsError || usersError || teamsError) && (
+        <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {projectsError || usersError || teamsError}
+        </p>
+      )}
+
       {showForm && (
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-[#0f172a]">
           <div className="mb-6 flex items-center justify-between">
@@ -385,7 +402,7 @@ const ProjectManagement = () => {
                 >
                   <option value="" className="dark:bg-[#1e293b] dark:text-white">Select Project Lead</option>
 
-                  {users.map((user) => (
+                  {projectLeadUsers.map((user) => (
                     <option key={user.id} value={user.id} className="dark:bg-[#1e293b] dark:text-white">
                       {user.fullName}{" "}
                       {user.status === "Inactive" ? "(Inactive)" : ""}
@@ -407,7 +424,7 @@ const ProjectManagement = () => {
                 >
                   <option value="" className="dark:bg-[#1e293b] dark:text-white">Select Project Manager</option>
 
-                  {users.map((user) => (
+                  {projectManagerUsers.map((user) => (
                     <option key={user.id} value={user.id} className="dark:bg-[#1e293b] dark:text-white">
                       {user.fullName}{" "}
                       {user.status === "Inactive" ? "(Inactive)" : ""}
@@ -415,6 +432,33 @@ const ProjectManagement = () => {
                   ))}
                 </select>
               </div>
+            </div>
+
+            <div className="mt-5">
+              <label className="mb-2 block text-xs font-semibold text-[#475569] dark:text-slate-300">
+                Project Team
+              </label>
+              <select
+                name="teamId"
+                value={form.teamId}
+                onChange={handleChange}
+                disabled={teamsLoading}
+                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-[#172033] outline-none transition focus:border-[#2563EB] focus:ring-2 focus:ring-blue-500/15 dark:border-slate-700 dark:bg-[#1e293b] dark:text-white"
+              >
+                <option value="">
+                  {editingProject ? "Keep current team" : "Create a default team"}
+                </option>
+                {selectableTeams.map((team) => (
+                  <option key={team.id} value={team.id}>
+                    {team.name}{team.projectName ? ` — ${team.projectName}` : ""}
+                  </option>
+                ))}
+              </select>
+              {!teamsLoading && teams.length === 0 && (
+                <p className="mt-1 text-xs text-[#64748B]">
+                  No existing teams are available; a default team will be created.
+                </p>
+              )}
             </div>
 
             <div className="mt-5 grid grid-cols-1 gap-5 md:grid-cols-3">

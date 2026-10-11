@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
 import {
   PiCalendarBlank,
@@ -6,25 +6,21 @@ import {
   PiCaretLeft,
   PiCaretRight,
   PiFunnel,
-  PiFolder,
-  PiCheckSquareOffset,
   PiX,
   PiWarningCircle,
   PiDownloadSimple,
   PiListBullets,
   PiFlag,
   PiCheckCircle,
-  PiClock,
   PiPlus,
   PiTrash,
 } from "react-icons/pi";
 
-import { useAuth } from "../../context/AuthContext.jsx";
-import { useProjects } from "../../context/ProjectContext.jsx";
-import { useTasks } from "../../context/TasksContext.jsx";
-import { useUsers } from "../../context/UsersContext.jsx";
-import { useTeams } from "../../context/TeamsContext.jsx";
-import { useProjectTeam } from "../../context/ProjectTeamContext.jsx";
+import { useAuth } from "../../context/AuthContextStore.js";
+import { useProjects } from "../../context/ProjectContextStore.js";
+import { useTasks } from "../../context/TasksContextStore.js";
+import { useUsers } from "../../context/UsersContextStore.js";
+import { useTeams } from "../../context/TeamsContextStore.js";
 import axios, { getApiBase } from "../../services/api.js";
 
 const API_BASE = getApiBase();
@@ -57,14 +53,6 @@ const formatDisplayDate = (value) => {
   return value.length > 10 && !value.endsWith("T00:00:00")
     ? `${displayDate}, ${date.toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" })}`
     : displayDate;
-};
-
-const formatDisplayTime = (eventDate) => {
-  if (!eventDate || eventDate.endsWith("T00:00:00")) return "All day";
-  const date = new Date(eventDate);
-  return Number.isNaN(date.getTime())
-    ? ""
-    : date.toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" });
 };
 
 const titleForType = (type) =>
@@ -103,7 +91,6 @@ const GlobalCalendar = () => {
   const { tasks = [], updateSubtask, updateTask } = useTasks();
   const { teams = [] } = useTeams();
   const { users = [] } = useUsers();
-  const { projectTeams = [] } = useProjectTeam();
 
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState("month"); // "month" | "week" | "agenda"
@@ -118,7 +105,6 @@ const GlobalCalendar = () => {
   const [sprints, setSprints] = useState([]);
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [newEventDate, setNewEventDate] = useState("");
-  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [showCreate, setShowCreate] = useState(false);
@@ -142,8 +128,7 @@ const GlobalCalendar = () => {
   const [draggedItem, setDraggedItem] = useState(null);
   const [dragOverDay, setDragOverDay] = useState(null);
 
-  const loadBackendEvents = async () => {
-    setLoading(true);
+  const loadBackendEvents = useCallback(async () => {
     setError("");
     try {
       const response = await axios.get(API);
@@ -154,21 +139,21 @@ const GlobalCalendar = () => {
       setError(
         err.response?.data?.message || "Calendar events could not be loaded."
       );
-    } finally {
-      setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     if (currentUser) {
-      loadBackendEvents();
+      Promise.resolve().then(loadBackendEvents);
     }
-  }, [currentUser?.id]);
+  }, [currentUser, loadBackendEvents]);
 
   useEffect(() => {
     let active = true;
     if (!form.projectId) {
-      setSprints([]);
+      Promise.resolve().then(() => {
+        if (active) setSprints([]);
+      });
       return () => { active = false; };
     }
     axios
@@ -188,7 +173,7 @@ const GlobalCalendar = () => {
     return () => {
       window.removeEventListener("nfn-calendar-events-updated", handleEventsUpdated);
     };
-  }, [currentUser?.id]);
+  }, [loadBackendEvents]);
 
   // Auto-clear toast
   useEffect(() => {
@@ -446,7 +431,7 @@ const GlobalCalendar = () => {
   const handleDrop = async (targetDateString) => {
     if (!draggedItem) return;
 
-    const { calendarType, rawId, id, title } = draggedItem;
+    const { calendarType, rawId, title } = draggedItem;
 
     try {
       if (calendarType === "task" && updateTask) {

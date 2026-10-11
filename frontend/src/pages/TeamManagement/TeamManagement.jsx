@@ -1,15 +1,28 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { IoAddSharp } from "react-icons/io5";
-import { useTeams } from "../../context/TeamsContext.jsx";
-import { useUsers } from "../../context/UsersContext.jsx";
+import { useTeams } from "../../context/TeamsContextStore.js";
+import { useUsers } from "../../context/UsersContextStore.js";
+import { useProjects } from "../../context/ProjectContextStore.js";
+import { useAuth } from "../../context/AuthContextStore.js";
+import { ROLES, normalizeRole } from "../../constants/roles.js";
 import TeamTable from "../../components/team/TeamTable.jsx";
 import EditMemberForm from "../../components/team/EditMemberForm.jsx";
 
-const TEAM_ROLES = ["Manager", "Member"];
+const TEAM_ROLES = ["Team Lead", "Developer", "Tester", "QA"];
+
+const SYSTEM_ROLE_BY_TEAM_ROLE = {
+  "Team Lead": [ROLES.TEAM_LEAD],
+  Developer: [ROLES.DEVELOPER, ROLES.TEAM_MEMBER],
+  Tester: [ROLES.TESTER],
+  QA: [ROLES.QA],
+};
 
 const TeamManagement = () => {
+  const { currentUser } = useAuth();
   const {
     teams,
+    loading: teamsLoading,
+    error: teamsError,
     createTeam,
     updateTeam,
     deleteTeam,
@@ -18,26 +31,51 @@ const TeamManagement = () => {
     removeMember,
   } = useTeams();
 
-  const { users } = useUsers();
+  const {
+    users,
+    loading: usersLoading,
+    error: usersError,
+    refetchUsers,
+  } = useUsers();
+  const { projects } = useProjects();
 
   const [newTeamName, setNewTeamName] = useState("");
+  const [newTeamProjectId, setNewTeamProjectId] = useState("");
   const [activeTeamId, setActiveTeamId] = useState(null);
   const [editingMember, setEditingMember] = useState(null);
   const [showAddMember, setShowAddMember] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState("");
-  const [teamRole, setTeamRole] = useState("Member");
+  const [teamRole, setTeamRole] = useState("Developer");
 
   const [editingTeamId, setEditingTeamId] = useState(null);
   const [editingTeamName, setEditingTeamName] = useState("");
 
-  useEffect(() => {
-    if (!activeTeamId && teams.length > 0) {
-      setActiveTeamId(teams[0].id);
-    }
-  }, [teams, activeTeamId]);
-
-  const activeTeam = teams.find(
-    (team) => String(team.id) === String(activeTeamId)
+  const manageableProjects = projects.filter((project) =>
+    normalizeRole(currentUser?.role) === ROLES.ADMIN ||
+    String(project.projectManager?.id ?? project.projectManagerId) === String(currentUser?.id)
+  );
+  const manageableTeams = teams.filter((team) =>
+    normalizeRole(currentUser?.role) === ROLES.ADMIN ||
+    manageableProjects.some((project) => String(project.id) === String(team.projectId))
+  );
+  const visibleActiveTeamId = activeTeamId ?? manageableTeams[0]?.id ?? null;
+  const visibleActiveTeam = manageableTeams.find(
+    (team) => String(team.id) === String(visibleActiveTeamId)
+  );
+  const activeTeam = visibleActiveTeam;
+  const assignableUsers = users.filter((user) =>
+    user.active !== false &&
+    user.status !== "Inactive" &&
+    SYSTEM_ROLE_BY_TEAM_ROLE[teamRole]?.includes(normalizeRole(user.role)) &&
+    !(visibleActiveTeam?.members || []).some((member) => String(member.userId) === String(user.id)) &&
+    !(teamRole === "Team Lead" && teams.some((team) =>
+      String(team.projectId) === String(visibleActiveTeam?.projectId) &&
+      String(team.id) !== String(visibleActiveTeam?.id) &&
+      (team.members || []).some((member) =>
+        String(member.userId) === String(user.id) &&
+        member.teamRole === "Team Lead"
+      )
+    ))
   );
 
   const handleCreateTeam = async (e) => {
@@ -45,7 +83,12 @@ const TeamManagement = () => {
 
     if (!newTeamName.trim()) return;
 
-    const result = await createTeam(newTeamName.trim());
+    if (!newTeamProjectId) {
+      alert("Select a project for this team.");
+      return;
+    }
+
+    const result = await createTeam(newTeamName.trim(), Number(newTeamProjectId));
 
     if (!result.success) {
       alert(result.message);
@@ -53,6 +96,7 @@ const TeamManagement = () => {
     }
 
     setNewTeamName("");
+    setNewTeamProjectId("");
   };
 
   const handleEditTeam = () => {
@@ -101,7 +145,7 @@ const TeamManagement = () => {
       return;
     }
 
-    const remainingTeams = teams.filter(
+    const remainingTeams = manageableTeams.filter(
       (team) => String(team.id) !== String(deletedTeamId)
     );
 
@@ -117,14 +161,17 @@ const TeamManagement = () => {
   const handleAddMember = async (e) => {
     e.preventDefault();
 
-    const user = users.find(
+    const user = assignableUsers.find(
       (u) => String(u.id) === String(selectedUserId)
     );
 
-    if (!user || !activeTeam) return;
+    if (!user || !activeTeam) {
+      alert("Select an active user whose system role matches the team role.");
+      return;
+    }
 
     const alreadyMember = (activeTeam.members || []).some(
-      (member) => String(member.user?.id) === String(user.id)
+      (member) => String(member.userId) === String(user.id)
     );
 
     if (alreadyMember) {
@@ -143,7 +190,7 @@ const TeamManagement = () => {
     }
 
     setSelectedUserId("");
-    setTeamRole("Member");
+    setTeamRole("Developer");
     setShowAddMember(false);
   };
 
@@ -156,7 +203,7 @@ const TeamManagement = () => {
 
     const result = await updateMember(
       activeTeam.id,
-      updated.user.id,
+      updated.userId,
       updated
     );
 
@@ -177,7 +224,7 @@ const TeamManagement = () => {
 
     if (!confirmed) return;
 
-    const result = await removeMember(activeTeam.id, member.user.id);
+    const result = await removeMember(activeTeam.id, member.userId);
 
     if (!result.success) {
       alert(result.message);
@@ -197,7 +244,7 @@ const TeamManagement = () => {
           </p>
         </div>
 
-        <form onSubmit={handleCreateTeam} className="flex gap-2">
+        <form onSubmit={handleCreateTeam} className="flex flex-wrap gap-2">
           <input
             type="text"
             placeholder="New team name"
@@ -205,6 +252,21 @@ const TeamManagement = () => {
             onChange={(e) => setNewTeamName(e.target.value)}
             className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-[#172033] placeholder:text-slate-400 outline-none transition focus:border-[#2563EB] focus:ring-2 focus:ring-blue-500/15"
           />
+
+          <select
+            value={newTeamProjectId}
+            onChange={(event) => setNewTeamProjectId(event.target.value)}
+            required
+            aria-label="Project for new team"
+            className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-[#172033]"
+          >
+            <option value="">Select project</option>
+            {manageableProjects.map((project) => (
+              <option key={project.id} value={project.id}>
+                {project.name}
+              </option>
+            ))}
+          </select>
 
           <button
             type="submit"
@@ -216,14 +278,21 @@ const TeamManagement = () => {
         </form>
       </div>
 
-      {teams.length > 0 && (
+      {teamsError && (
+        <p role="alert" className="mt-3 text-sm text-red-700">
+          {teamsError}
+        </p>
+      )}
+      {teamsLoading && <p className="mt-3 text-sm text-slate-500">Loading teams...</p>}
+
+      {manageableTeams.length > 0 && (
         <div className="mt-6 flex gap-2 overflow-x-auto border-b border-slate-300 pb-3">
-          {teams.map((team) => (
+          {manageableTeams.map((team) => (
             <button
               key={team.id}
               onClick={() => setActiveTeamId(team.id)}
               className={`rounded-xl px-3.5 py-2 text-sm transition ${
-                String(team.id) === String(activeTeamId)
+                String(team.id) === String(visibleActiveTeamId)
                   ? "bg-gradient-to-r from-[#2563EB] to-[#4F46E5] font-semibold text-white shadow-sm"
                   : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white"
               }`}
@@ -234,7 +303,7 @@ const TeamManagement = () => {
         </div>
       )}
 
-      {teams.length === 0 && (
+      {manageableTeams.length === 0 && (
         <div className="mt-6 rounded-2xl border border-slate-300 bg-white p-10 text-center shadow-sm">
           <p className="text-sm text-[#64748B]">
             No teams created yet.
@@ -318,20 +387,33 @@ const TeamManagement = () => {
                 value={selectedUserId}
                 onChange={(e) => setSelectedUserId(e.target.value)}
                 required
+                disabled={usersLoading || Boolean(usersError) || assignableUsers.length === 0}
                 className="flex-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-[#172033] outline-none transition focus:border-[#2563EB] focus:ring-2 focus:ring-blue-500/15"
               >
-                <option value="">Select user</option>
+                <option value="">
+                  {usersLoading
+                    ? "Loading active users..."
+                    : usersError
+                      ? "Users could not be loaded"
+                      : assignableUsers.length === 0
+                        ? "No eligible users"
+                        : "Select user"}
+                </option>
 
-                {users.map((user) => (
+                {assignableUsers.map((user) => (
                   <option key={user.id} value={user.id}>
-                    {user.fullName} ({user.email})
+                    {user.displayName || user.fullName}
+                    {user.email ? ` (${user.email})` : ""}
                   </option>
                 ))}
               </select>
 
               <select
                 value={teamRole}
-                onChange={(e) => setTeamRole(e.target.value)}
+                onChange={(e) => {
+                  setTeamRole(e.target.value);
+                  setSelectedUserId("");
+                }}
                 className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-[#172033] outline-none transition focus:border-[#2563EB] focus:ring-2 focus:ring-blue-500/15"
               >
                 {TEAM_ROLES.map((role) => (
@@ -340,9 +422,22 @@ const TeamManagement = () => {
                   </option>
                 ))}
               </select>
+              {usersError ? (
+                <div className="w-full text-xs text-red-700" role="alert">
+                  <span>{usersError}</span>{" "}
+                  <button type="button" className="font-semibold underline" onClick={refetchUsers}>
+                    Retry
+                  </button>
+                </div>
+              ) : assignableUsers.length === 0 && !usersLoading ? (
+                <p className="w-full text-xs text-slate-600">
+                  No eligible active users are available for this team role.
+                </p>
+              ) : null}
 
               <button
                 type="submit"
+                disabled={usersLoading || Boolean(usersError) || !selectedUserId}
                 className="rounded-xl bg-gradient-to-r from-[#2563EB] to-[#4F46E5] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:brightness-110"
               >
                 Add

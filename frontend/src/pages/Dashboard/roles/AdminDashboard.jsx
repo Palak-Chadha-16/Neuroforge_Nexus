@@ -7,9 +7,9 @@ import {
   PiChartPieSlice,
 } from "react-icons/pi";
 import { PieChart, Pie, Cell, Tooltip } from "recharts";
-import { useUsers } from "../../../context/UsersContext.jsx";
-import { useProjects } from "../../../context/ProjectContext.jsx";
-import { useTheme } from "../../../context/ThemeContext.jsx";
+import { useUsers } from "../../../context/UsersContextStore.js";
+import { useProjects } from "../../../context/ProjectContextStore.js";
+import { useTheme } from "../../../context/ThemeContextStore.js";
 
 const AdminDashboard = () => {
   const { users } = useUsers();

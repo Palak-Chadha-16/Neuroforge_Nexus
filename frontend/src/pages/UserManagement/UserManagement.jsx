@@ -1,8 +1,8 @@
-import { useState, useMemo, useEffect } from "react";
-import { useAuth } from "../../context/AuthContext.jsx";
-import { useUsers } from "../../context/UsersContext.jsx";
-import { useProjectTeam } from "../../context/ProjectTeamContext.jsx";
-import { useProjects } from "../../context/ProjectContext.jsx";
+import { useState, useMemo, useCallback } from "react";
+import { useAuth } from "../../context/AuthContextStore.js";
+import { useUsers } from "../../context/UsersContextStore.js";
+import { useProjectTeam } from "../../context/ProjectTeamContextStore.js";
+import { useProjects } from "../../context/ProjectContextStore.js";
 import UserSearch from "../../components/user/UserSearch.jsx";
 import EditUserForm from "../../components/user/EditUserForm.jsx";
 import DeleteUserModal from "../../components/user/DeleteUserModal.jsx";
@@ -46,12 +46,24 @@ const UserManagement = () => {
   const [statusFilter, setStatusFilter] = useState("All");
   const [assignmentFilter, setAssignmentFilter] = useState("All");
 
-  // Reset pagination to first page when filtering or searching
-  useEffect(() => {
+  const updateSearchTerm = (value) => {
     setCurrentPage(1);
-  }, [searchTerm, roleFilter, statusFilter, assignmentFilter]);
+    setSearchTerm(value);
+  };
+  const updateRoleFilter = (value) => {
+    setCurrentPage(1);
+    setRoleFilter(value);
+  };
+  const updateStatusFilter = (value) => {
+    setCurrentPage(1);
+    setStatusFilter(value);
+  };
+  const updateAssignmentFilter = (value) => {
+    setCurrentPage(1);
+    setAssignmentFilter(value);
+  };
 
-  const isUserAssigned = (userId) => {
+  const isUserAssigned = useCallback((userId) => {
     // Check ProjectTeam assignments
     if (projectTeams) {
       const inTeam = Object.values(projectTeams).some(
@@ -72,14 +84,14 @@ const UserManagement = () => {
     }
 
     return false;
-  };
+  }, [projectTeams, projects]);
 
   const stats = useMemo(() => {
     const total = users.length;
     const active = users.filter((u) => (u.status || "Active") === "Active").length;
     const assigned = users.filter((u) => isUserAssigned(u.id)).length;
     return { total, active, assigned };
-  }, [users, projectTeams, projects]);
+  }, [users, isUserAssigned]);
 
   const isSuperAdmin = normalizeRole(currentUser?.role) === ROLES.ADMIN;
 
@@ -137,7 +149,7 @@ const UserManagement = () => {
     statusFilter,
     assignmentFilter,
     isSuperAdmin,
-    projectTeams,
+    isUserAssigned,
   ]);
 
   if (!currentUser) {
@@ -195,10 +207,10 @@ const UserManagement = () => {
   };
 
   const handleResetFilters = () => {
-    setSearchTerm("");
-    setRoleFilter("All");
-    setStatusFilter("All");
-    setAssignmentFilter("All");
+    updateSearchTerm("");
+    updateRoleFilter("All");
+    updateStatusFilter("All");
+    updateAssignmentFilter("All");
   };
 
   const handleAssignUser = async (projectId, userId, projectRole) => {
@@ -267,13 +279,13 @@ const UserManagement = () => {
 
       <UserSearch
         searchTerm={searchTerm}
-        onSearchChange={setSearchTerm}
+        onSearchChange={updateSearchTerm}
         roleFilter={roleFilter}
-        onRoleFilterChange={setRoleFilter}
+        onRoleFilterChange={updateRoleFilter}
         statusFilter={statusFilter}
-        onStatusFilterChange={setStatusFilter}
+        onStatusFilterChange={updateStatusFilter}
         assignmentFilter={assignmentFilter}
-        onAssignmentFilterChange={setAssignmentFilter}
+        onAssignmentFilterChange={updateAssignmentFilter}
         roles={FILTERABLE_ROLES}
         onResetFilters={handleResetFilters}
       />

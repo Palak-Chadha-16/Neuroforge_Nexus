@@ -8,9 +8,9 @@ import {
   PiClock,
   PiListChecks,
 } from "react-icons/pi";
-import { useTasks } from "../../context/TasksContext.jsx";
-import { useProjects } from "../../context/ProjectContext.jsx";
-import { useUsers } from "../../context/UsersContext.jsx";
+import { useTasks } from "../../context/TasksContextStore.js";
+import { useProjects } from "../../context/ProjectContextStore.js";
+import { useUsers } from "../../context/UsersContextStore.js";
 
 const TASK_STATUSES = ["To Do", "In Progress", "Done"];
 

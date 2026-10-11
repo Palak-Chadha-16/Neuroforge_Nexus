@@ -27,10 +27,10 @@ import {
   PiMoon,
   PiGear,
 } from "react-icons/pi";
-import { useAuth } from "../../context/AuthContext.jsx";
-import { useTheme } from "../../context/ThemeContext.jsx";
-import { useProjects } from "../../context/ProjectContext.jsx";
-import { useTasks } from "../../context/TasksContext.jsx";
+import { useAuth } from "../../context/AuthContextStore.js";
+import { useTheme } from "../../context/ThemeContextStore.js";
+import { useProjects } from "../../context/ProjectContextStore.js";
+import { useTasks } from "../../context/TasksContextStore.js";
 import { ROLES, formatRole, normalizeRole } from "../../constants/roles.js";
 
 const ROLE_CONFIG = {
@@ -102,7 +102,7 @@ const Navbar = ({
   onRequestDeleteAccount,
 }) => {
   const { currentUser, logout } = useAuth();
-  const { theme, isDark, toggleTheme } = useTheme();
+  const { isDark, toggleTheme } = useTheme();
   const { projects = [] } = useProjects();
   const { tasks = [] } = useTasks();
   const location = useLocation();

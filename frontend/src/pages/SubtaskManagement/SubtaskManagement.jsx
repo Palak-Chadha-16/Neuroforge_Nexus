@@ -10,9 +10,9 @@ import {
   PiUserCircle,
 } from "react-icons/pi";
 
-import { useTasks } from "../../context/TasksContext.jsx";
-import { useUsers } from "../../context/UsersContext.jsx";
-import { useAuth } from "../../context/AuthContext.jsx";
+import { useTasks } from "../../context/TasksContextStore.js";
+import { useUsers } from "../../context/UsersContextStore.js";
+import { useAuth } from "../../context/AuthContextStore.js";
 import { usePermission } from "../../hooks/usePermission.js";
 import Can from "../../components/common/Can.jsx";
 

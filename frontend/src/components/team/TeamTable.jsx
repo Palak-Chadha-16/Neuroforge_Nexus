@@ -27,21 +27,21 @@ const TeamTable = ({ members, onEdit, onRemove }) => {
             ) : (
               members.map((member) => (
                 <tr
-                  key={member.id}
+                  key={member.memberId}
                   className="border-b border-slate-200 transition last:border-b-0 hover:bg-[#F1F5F9]"
                 >
                   <td className="px-6 py-4 font-medium text-[#172033]">
-                    {member.user?.fullName || "Unknown User"}
+                    {member.fullName || "Unknown User"}
                   </td>
 
                   <td className="px-6 py-4 text-sm text-[#475569]">
-                    {member.user?.email || "-"}
+                    {member.email || "-"}
                   </td>
 
                   <td className="px-6 py-4">
                     <span
                       className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${
-                        member.teamRole === "Manager"
+                        member.teamRole === "Team Lead"
                           ? "border-indigo-200 bg-indigo-50 text-indigo-700"
                           : "border-blue-200 bg-blue-50 text-blue-700"
                       }`}
@@ -55,9 +55,7 @@ const TeamTable = ({ members, onEdit, onRemove }) => {
                       <button
                         type="button"
                         onClick={() => onEdit(member)}
-                        aria-label={`Edit ${
-                          member.user?.fullName || "member"
-                        }`}
+                        aria-label={`Edit ${member.fullName || "member"}`}
                         className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 transition hover:border-blue-200 hover:bg-blue-50 hover:text-[#2563EB]"
                       >
                         <FaEdit size={14} />
@@ -66,9 +64,7 @@ const TeamTable = ({ members, onEdit, onRemove }) => {
                       <button
                         type="button"
                         onClick={() => onRemove(member)}
-                        aria-label={`Remove ${
-                          member.user?.fullName || "member"
-                        }`}
+                        aria-label={`Remove ${member.fullName || "member"}`}
                         className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 transition hover:border-red-200 hover:bg-red-50 hover:text-[#DC2626]"
                       >
                         <FaTrash size={14} />

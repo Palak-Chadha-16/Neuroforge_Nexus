@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { PiGithubLogo, PiX, PiLink, PiCheck, PiInfo } from "react-icons/pi";
-import { useProjects } from "../../context/ProjectContext.jsx";
+import { useProjects } from "../../context/ProjectContextStore.js";
 
 const ConnectRepoModal = ({ isOpen, project, onClose }) => {
   const { updateProject } = useProjects();
@@ -9,10 +9,16 @@ const ConnectRepoModal = ({ isOpen, project, onClose }) => {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (project) {
-      setRepoUrl(project.repository || "");
-      setError("");
-    }
+    let active = true;
+    Promise.resolve().then(() => {
+      if (active && project) {
+        setRepoUrl(project.repository || "");
+        setError("");
+      }
+    });
+    return () => {
+      active = false;
+    };
   }, [project]);
 
   if (!isOpen || !project) return null;
