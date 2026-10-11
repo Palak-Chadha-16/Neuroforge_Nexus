@@ -15,6 +15,7 @@ import {
   PiDotsThreeVertical,
   PiArrowSquareOut,
   PiGithubLogo,
+  PiRocket,
 } from "react-icons/pi";
 
 import { useProjects } from "../../context/ProjectContext.jsx";
@@ -24,6 +25,7 @@ import { useTasks } from "../../context/TasksContext.jsx";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { ROLES, normalizeRole } from "../../constants/roles.js";
 import ConnectRepoModal from "../../components/project/ConnectRepoModal.jsx";
+import DevOpsPipelineView from "../../components/project/DevOpsPipelineView.jsx";
 
 const PROJECT_ROLES = ["Team Lead", "Developer", "Tester", "QA"];
 
@@ -314,6 +316,13 @@ const ProjectWorkspace = () => {
     ROLES.PROJECT_MANAGER,
     ROLES.PROJECT_LEAD,
   ].includes(currentRole);
+
+  const userSkillStr = String(currentUser?.skill || "").toLowerCase();
+  const canTriggerPipeline =
+    canManageProjects ||
+    userSkillStr.includes("devops") ||
+    (Array.isArray(currentUser?.skills) &&
+      currentUser.skills.some((s) => String(s).toLowerCase().includes("devops")));
 
   const handleProjectFormChange = (event) => {
     const { name, value } = event.target;
@@ -736,6 +745,18 @@ const ProjectWorkspace = () => {
               >
                 {projectTasks.length}
               </span>
+            </button>
+
+            <button
+              onClick={() => setActiveSection("devops")}
+              className={`flex items-center gap-2 border-b-2 px-5 py-4 text-sm font-semibold transition ${
+                activeSection === "devops"
+                  ? "border-[#2563EB] text-[#2563EB] dark:border-blue-500 dark:text-blue-400"
+                  : "border-transparent text-[#64748B] hover:text-[#172033] dark:text-slate-400 dark:hover:text-white"
+              }`}
+            >
+              <PiRocket size={16} />
+              <span>DevOps & CI/CD</span>
             </button>
           </div>
         </div>
@@ -1279,6 +1300,14 @@ const ProjectWorkspace = () => {
               )}
             </div>
           </div>
+        )}
+
+        {activeSection === "devops" && (
+          <DevOpsPipelineView
+            project={project}
+            canTriggerPipeline={canTriggerPipeline}
+            onConnectRepo={() => setShowConnectRepo(true)}
+          />
         )}
       </div>
 

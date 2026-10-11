@@ -9,6 +9,7 @@
 > - ✅ **Teams & Project Member Allocations**: Fully implemented in `TeamController` and `ProjectController`.
 > - ✅ **AI Assistant SDLC Chatbot**: Fully implemented in `ChatController` (`POST /api/chat`).
 > - ✅ **Calendar & Meeting Scheduling Events**: Fully implemented in `CalendarController` (`/api/calendar`).
+> - ✅ **DevOps & CI/CD Pipelines UI**: Fully implemented in frontend (`ProjectWorkspace.jsx` -> `DevOpsPipelineView.jsx`) with live telemetry, trigger controls, and Railway environment health cards.
 > - ✅ **Codebase Integration Points**: All 65 frontend integration comments have been cleaned up and verified.
 
 ---
@@ -19,10 +20,11 @@
    - [A. User Status & Presence Integration](#a-user-status--presence-integration)
    - [B. Task & Subtask Status Transition APIs](#b-task--subtask-status-transition-apis)
    - [C. Complete REST API Reference](#c-complete-rest-api-reference)
-3. [Remaining Optional Backend Enhancements](#3-remaining-optional-backend-enhancements)
-   - [A. Project Custom Repository URL Field](#a-project-custom-repository-url-field)
-4. [cURL Verification Commands](#4-curl-verification-commands)
-5. [Frontend Integration Points Cleanup Status](#5-frontend-integration-points-cleanup-status)
+3. [DevOps & CI/CD Module Backend Specification](#3-devops--cicd-module-backend-specification)
+4. [Railway Cloud Deployment & Production Configuration](#4-railway-cloud-deployment--production-configuration)
+5. [Database Migration](#5-database-migration)
+6. [cURL Verification Commands](#6-curl-verification-commands)
+7. [Frontend Integration Points Cleanup Status](#7-frontend-integration-points-cleanup-status)
 
 ---
 
@@ -166,7 +168,161 @@ All endpoints connect under `http://localhost:8080/api`.
 
 ---
 
-## 3. Database migration
+## 3. DevOps & CI/CD Module Backend Specification
+
+The frontend has implemented the **DevOps & CI/CD** tab in `ProjectWorkspace.jsx` (`DevOpsPipelineView.jsx`). When connected, the frontend sends requests to the following endpoints under `/api/projects/{projectId}/...`.
+
+> **Note**: The frontend includes built-in offline/mock fallback for all these endpoints, so it continues to function smoothly with realistic telemetry even before the backend team implements them.
+
+### A. Endpoints Overview
+
+| Method | Endpoint | Description | Authorized Roles | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `GET` | `/api/projects/{projectId}/pipelines` | List pipeline runs for the project | All project members | ⏳ Pending Backend Implementation |
+| `POST` | `/api/projects/{projectId}/pipelines/trigger` | Trigger a new build / pipeline run | `ADMIN`, `PROJECT_MANAGER`, `PROJECT_LEAD`, or Skill `DEVOPS` | ⏳ Pending Backend Implementation |
+| `GET` | `/api/projects/{projectId}/environments` | List deployment environments & health status | All project members | ⏳ Pending Backend Implementation |
+
+---
+
+### B. Detailed Contracts & DTOs
+
+#### 1. GET `/api/projects/{projectId}/pipelines`
+Fetches recent CI/CD pipeline runs for the project.
+
+**Response `200 OK`**:
+```json
+[
+  {
+    "id": 101,
+    "commit": "73610ae",
+    "commitMessage": "fix(backend): restore local H2 database defaults and add railway profile",
+    "branch": "main",
+    "status": "SUCCESS",
+    "duration": "2m 14s",
+    "triggeredBy": "System Admin",
+    "createdAt": "25 minutes ago",
+    "steps": [
+      { "name": "Code Checkout & Git Sync", "duration": "8s", "status": "SUCCESS" },
+      { "name": "Maven Build & Compile", "duration": "42s", "status": "SUCCESS" },
+      { "name": "Unit & Integration Tests", "duration": "35s", "status": "SUCCESS" },
+      { "name": "Static Security & Vulnerability Scan", "duration": "16s", "status": "SUCCESS" },
+      { "name": "Docker Image Build & Push", "duration": "21s", "status": "SUCCESS" },
+      { "name": "Railway Cloud Deployment", "duration": "12s", "status": "SUCCESS" }
+    ]
+  }
+]
+```
+- **Allowed `status` values**: `"SUCCESS"` (green badge), `"RUNNING"` (blue spinning badge), `"FAILED"` (red badge), `"CANCELED"` (gray badge).
+
+#### 2. POST `/api/projects/{projectId}/pipelines/trigger`
+Dispatches a new CI/CD pipeline build for a specific branch and environment.
+
+**Request Body**:
+```json
+{
+  "branch": "main",
+  "environment": "Production",
+  "commitMessage": "Manual deployment trigger from workspace"
+}
+```
+
+**Response `201 Created`**:
+```json
+{
+  "id": 105,
+  "commit": "head-hash",
+  "commitMessage": "Manual deployment trigger from workspace",
+  "branch": "main",
+  "status": "RUNNING",
+  "duration": "0m 05s",
+  "triggeredBy": "Suravi Ghosh",
+  "createdAt": "Just now",
+  "steps": [
+    { "name": "Code Checkout & Git Sync", "duration": "3s", "status": "SUCCESS" },
+    { "name": "Maven Build & Compile", "duration": "--", "status": "RUNNING" },
+    { "name": "Quality Gate & Testing", "duration": "--", "status": "PENDING" },
+    { "name": "Deploy to Production", "duration": "--", "status": "PENDING" }
+  ]
+}
+```
+
+#### 3. GET `/api/projects/{projectId}/environments`
+Retrieves live telemetry and health status for target deployment environments.
+
+**Response `200 OK`**:
+```json
+[
+  {
+    "name": "Production",
+    "status": "UP",
+    "healthStatus": "Healthy",
+    "url": "https://neuroforge-prod.up.railway.app",
+    "version": "v1.2.0",
+    "commit": "944464f",
+    "lastDeployed": "Today at 18:42",
+    "uptime": "99.98%",
+    "branch": "main"
+  },
+  {
+    "name": "Staging / QA",
+    "status": "UP",
+    "healthStatus": "Healthy",
+    "url": "https://neuroforge-staging.up.railway.app",
+    "version": "v1.2.1-rc",
+    "commit": "ca5d23d",
+    "lastDeployed": "Today at 21:15",
+    "uptime": "100%",
+    "branch": "develop"
+  }
+]
+```
+
+---
+
+## 4. Railway Cloud Deployment & Production Configuration
+
+We are using **Railway** (`railway.app`) for backend and MySQL deployment. Follow these exact instructions for a seamless setup:
+
+### A. Dedicated Railway Spring Profile
+The backend has a dedicated Spring profile configuration file:
+`backend/src/main/resources/application-railway.properties`
+
+To activate this profile on Railway, set this environment variable in your Railway service dashboard:
+```properties
+SPRING_PROFILES_ACTIVE=railway
+```
+
+### B. Railway MySQL Environment Variables
+In Railway, when connecting the Spring Boot service to the Railway MySQL plugin, configure these variables in the **Variables** tab of the backend service:
+
+| Variable Name | Recommended Railway Value | Description |
+| :--- | :--- | :--- |
+| `SPRING_PROFILES_ACTIVE` | `railway` | Activates the Railway profile |
+| `DB_URL` | `jdbc:mysql://${{MySQL.MYSQLHOST}}:${{MySQL.MYSQLPORT}}/${{MySQL.MYSQLDATABASE}}` | Railway internal MySQL connection string |
+| `DB_DRIVER` | `com.mysql.cj.jdbc.Driver` | MySQL JDBC Driver |
+| `DB_USERNAME` | `${{MySQL.MYSQLUSER}}` | Railway MySQL username |
+| `DB_PASSWORD` | `${{MySQL.MYSQLPASSWORD}}` | Railway MySQL password |
+| `HIBERNATE_DDL_AUTO` | `update` | Automatically creates and updates schema on deploy |
+| `JWT_SECRET` | *(Random 32+ character string)* | Secret for signing JWT tokens |
+| `ADMIN_PASSWORD` | *(Secure admin password)* | Bootstrap admin password |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,https://your-frontend.railway.app,https://your-frontend.vercel.app` | Allowed frontend domains (comma-separated) |
+
+> [!IMPORTANT]
+> **Never replace the local defaults** in `application.properties` with `mysql.railway.internal`. `mysql.railway.internal` only resolves inside Railway's private network. Using `application-railway.properties` or environment variables guarantees that **both** local development and Railway cloud deployment function without conflict.
+
+### C. Frontend Production Deployment Configuration
+1. **API Base URL**: The frontend connects to the backend using `VITE_API_BASE`.
+   In `frontend/.env.production` (or your cloud platform's environment variables dashboard):
+   ```properties
+   VITE_API_BASE=https://your-backend-service.up.railway.app/api
+   ```
+2. **SPA Routing**:
+   - `frontend/public/_redirects` is provided for Netlify deployment (`/*    /index.html   200`).
+   - `frontend/vercel.json` is provided for Vercel deployment with route rewrites.
+
+---
+
+## 5. Database migration
 
 The setup script creates the current schema without dropping existing data. For an
 existing installation, run `backend/src/main/resources/db/V2__calendar_bug_repository_persistence.sql`
@@ -175,7 +331,7 @@ calendar, bug-report comments/activity, or project repository persistence.
 
 ---
 
-## 4. cURL Verification Commands
+## 6. cURL Verification Commands
 
 Backend developers can test the implemented endpoints directly:
 
@@ -203,9 +359,29 @@ curl -X PATCH http://localhost:8080/api/subtasks/101/status \
   -d '{"status":"In Review"}'
 ```
 
+### 4. Fetch Project Pipeline Runs
+```bash
+curl -X GET http://localhost:8080/api/projects/1/pipelines \
+  -H "Authorization: Bearer <TOKEN>"
+```
+
+### 5. Trigger Project Pipeline Run
+```bash
+curl -X POST http://localhost:8080/api/projects/1/pipelines/trigger \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"branch":"main","environment":"Production","commitMessage":"Sprint release v1.2"}'
+```
+
+### 6. Fetch Project Environments Health
+```bash
+curl -X GET http://localhost:8080/api/projects/1/environments \
+  -H "Authorization: Bearer <TOKEN>"
+```
+
 ---
 
-## 5. Frontend Integration Points Cleanup Status
+## 7. Frontend Integration Points Cleanup Status
 
 All **65 `[BACKEND_INTEGRATION_POINT]` comments** across the 18 frontend files have been cleaned up:
 - `npm run clean:comments` executed successfully.
