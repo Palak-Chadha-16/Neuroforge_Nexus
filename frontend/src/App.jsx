@@ -8,6 +8,7 @@ useNavigate,
 } from "react-router-dom";
 
 import BugReporting from "./pages/Testing/BugReporting.jsx";
+import DevOpsManagement from "./pages/DevOps/DevOpsManagement.jsx";
 
 import { ThemeProvider } from "./context/ThemeContext.jsx";
 import { AuthProvider, useAuth } from "./context/AuthContext.jsx";
@@ -222,6 +223,11 @@ currentUser ? ( <Navigate to="/dashboard" replace />
   <Route
     path="/testing"
     element={protect(<BugReporting />)}
+  />
+
+  <Route
+    path="/devops"
+    element={protect(<DevOpsManagement />)}
   />
 
   <Route

@@ -9,6 +9,7 @@ PiBriefcase,
 PiBug,
 PiGearSix,
 PiShieldCheck,
+PiRocket,
 } from "react-icons/pi";
 
 import { ROLES, MEMBER_ROLES, normalizeRole } from "../constants/roles.js";
@@ -65,6 +66,18 @@ ROLES.TEAM_LEAD,
 label: "Testing",
 path: "/testing",
 icon: PiBug,
+roles: [
+ROLES.ADMIN,
+ROLES.PROJECT_MANAGER,
+ROLES.PROJECT_LEAD,
+ROLES.TEAM_LEAD,
+...MEMBER_ROLES,
+],
+},
+{
+label: "DevOps",
+path: "/devops",
+icon: PiRocket,
 roles: [
 ROLES.ADMIN,
 ROLES.PROJECT_MANAGER,
