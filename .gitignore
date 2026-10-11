@@ -1,4 +1,5 @@
 node_modules/ 
 .idea/ 
-backend/src/main/resources/application.properties
 application-local.properties
+backend/data/
+*.mv.db
