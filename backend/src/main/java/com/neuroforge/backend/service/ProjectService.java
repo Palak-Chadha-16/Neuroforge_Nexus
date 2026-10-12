@@ -62,7 +62,8 @@ public class ProjectService {
     public List<ProjectDtos.Summary> list() {
         AuthUser user = CurrentUser.get();
         return access.visibleProjects(user).stream()
-                .map(ProjectDtos.Summary::from)
+                .map(p -> ProjectDtos.Summary.from(p,
+                        p.getTeam() == null ? 0 : (int) teamMemberRepository.countByTeamId(p.getTeam().getId())))
                 .toList();
     }
 
@@ -128,8 +129,6 @@ public class ProjectService {
         project.setTaskCounter(0);
 
         Project saved = projectRepository.save(project);
-        Team team = resolveOrCreateTeam(saved, request.getTeamId());
-        saved.setTeam(team);
 
         if (request.getMemberIds() != null) {
             saved.getMembers().addAll(resolveUsers(request.getMemberIds()));
@@ -337,6 +336,9 @@ public class ProjectService {
     }
 
     private void validateProjectRoleMatchesUser(User user, String value) {
+        if (user.getRole() == Role.UNASSIGNED) {
+            throw new BusinessRuleException("UNASSIGNED users cannot be added to a project. Assign a system role first.");
+        }
         String normalized = normalizeProjectRole(value);
         Role role = user.getRole();
         boolean ok = switch (normalized) {
@@ -511,25 +513,19 @@ public class ProjectService {
     }
 
     private Team resolveOrCreateTeam(Project project, Long teamId) {
-        if (teamId != null) {
-            Team team = teamRepository.findById(teamId)
-                    .orElseThrow(() -> new IllegalArgumentException("Team not found with id " + teamId));
-            if (team.getProject() != null && !team.getProject().getId().equals(project.getId())) {
-                throw new IllegalArgumentException("Selected team belongs to another project");
-            }
-            if (team.getProject() == null) {
-                team.setProject(project);
-                return teamRepository.save(team);
-            }
-            return team;
+        if (teamId == null) {
+            return null; // No auto-creation: teams are created explicitly from the Teams page
         }
-
-        Team team = new Team();
-        team.setName(project.getName() + " Team");
-        team.setTeamCode("TEAM-" + String.format("%02d", project.getId()));
-        team.setDescription("Default project team");
-        team.setProject(project);
-        return teamRepository.save(team);
+        Team team = teamRepository.findById(teamId)
+                .orElseThrow(() -> new IllegalArgumentException("Team not found with id " + teamId));
+        if (team.getProject() != null && !team.getProject().getId().equals(project.getId())) {
+            throw new IllegalArgumentException("Selected team belongs to another project");
+        }
+        if (team.getProject() == null) {
+            team.setProject(project);
+            return teamRepository.save(team);
+        }
+        return team;
     }
 
     private void syncAssignments(Project project) {

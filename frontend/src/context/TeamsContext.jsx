@@ -21,10 +21,7 @@ export const TeamsProvider = ({ children }) => {
     const role = currentUser?.role?.toUpperCase();
 
     // Teams are available only to ADMIN and PROJECT_MANAGER.
-    if (
-      role !== "ADMIN" &&
-      role !== "PROJECT_MANAGER"
-    ) {
+    if (role !== "ADMIN" && role !== "PROJECT_MANAGER") {
       setTeams([]);
       setLoading(false);
       return [];
@@ -34,17 +31,22 @@ export const TeamsProvider = ({ children }) => {
     setError("");
 
     try {
-            const response = await axios.get(`${API_BASE}/teams`);
+      const response = await axios.get(`${API_BASE}/teams`);
 
       const teamsWithMembers = await Promise.all(
         response.data.map(async (team) => {
-          const membersResponse = await axios.get(
-            `${API_BASE}/teams/${team.id}/members`
-          );
-          return {
-            ...team,
-            members: membersResponse.data,
-          };
+          try {
+            const membersResponse = await axios.get(
+              `${API_BASE}/teams/${team.id}/members`
+            );
+            return { ...team, members: membersResponse.data };
+          } catch (memberError) {
+            console.error(
+              `Failed to fetch members for team ${team.id}:`,
+              memberError
+            );
+            return { ...team, members: [] };
+          }
         })
       );
 
@@ -73,7 +75,7 @@ export const TeamsProvider = ({ children }) => {
 
   const createTeam = async (name, projectId) => {
     try {
-            await axios.post(`${API_BASE}/teams`, {
+      await axios.post(`${API_BASE}/teams`, {
         name,
         projectId,
         description: "",
@@ -89,7 +91,7 @@ export const TeamsProvider = ({ children }) => {
 
   const updateTeam = async (teamId, updates) => {
     try {
-            await axios.put(`${API_BASE}/teams/${teamId}`, {
+      await axios.put(`${API_BASE}/teams/${teamId}`, {
         name: updates.name,
         description: updates.description || "",
       });
@@ -104,7 +106,7 @@ export const TeamsProvider = ({ children }) => {
 
   const deleteTeam = async (teamId) => {
     try {
-            await axios.delete(`${API_BASE}/teams/${teamId}`);
+      await axios.delete(`${API_BASE}/teams/${teamId}`);
 
       await fetchTeams();
 
@@ -116,13 +118,10 @@ export const TeamsProvider = ({ children }) => {
 
   const addMember = async (teamId, member) => {
     try {
-      await axios.post(
-        `${API_BASE}/teams/${teamId}/members`,
-        {
-          userId: member.userId,
-          teamRole: member.teamRole,
-        }
-      );
+      await axios.post(`${API_BASE}/teams/${teamId}/members`, {
+        userId: member.userId,
+        teamRole: member.teamRole,
+      });
 
       await fetchTeams();
 
@@ -132,18 +131,11 @@ export const TeamsProvider = ({ children }) => {
     }
   };
 
-  const updateMember = async (
-    teamId,
-    userId,
-    updates
-  ) => {
+  const updateMember = async (teamId, userId, updates) => {
     try {
-      await axios.put(
-        `${API_BASE}/teams/${teamId}/members/${userId}`,
-        {
-          teamRole: updates.teamRole,
-        }
-      );
+      await axios.put(`${API_BASE}/teams/${teamId}/members/${userId}`, {
+        teamRole: updates.teamRole,
+      });
 
       await fetchTeams();
 
@@ -153,14 +145,9 @@ export const TeamsProvider = ({ children }) => {
     }
   };
 
-  const removeMember = async (
-    teamId,
-    userId
-  ) => {
+  const removeMember = async (teamId, userId) => {
     try {
-      await axios.delete(
-        `${API_BASE}/teams/${teamId}/members/${userId}`
-      );
+      await axios.delete(`${API_BASE}/teams/${teamId}/members/${userId}`);
 
       await fetchTeams();
 

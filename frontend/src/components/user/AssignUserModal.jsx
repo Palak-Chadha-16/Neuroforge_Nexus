@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { PiX, PiFolder, PiBriefcase, PiUserPlus } from "react-icons/pi";
 import { normalizeRole, ROLES, formatRole } from "../../constants/roles.js";
 
@@ -27,6 +27,15 @@ const AssignUserModal = ({
   const [selectedRole, setSelectedRole] = useState(projectRoles[0] || "");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
+
+  // Reset selections whenever the modal opens for a different user
+  useEffect(() => {
+    if (isOpen && user) {
+      setSelectedProjectId(projects.length > 0 ? String(projects[0].id) : "");
+      setSelectedRole(defaultRoleForUser(user));
+      setError("");
+    }
+  }, [isOpen, user?.id]);
 
   if (!isOpen || !user) return null;
 

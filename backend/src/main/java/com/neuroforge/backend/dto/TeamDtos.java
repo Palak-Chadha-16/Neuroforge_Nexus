@@ -70,5 +70,7 @@ public final class TeamDtos {
             Long projectId,
             String projectName,
             String projectCode,
+            Long teamLeadId,
+            String teamLeadName,
             List<MemberInfo> members) {}
 }

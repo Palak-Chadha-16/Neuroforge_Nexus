@@ -570,7 +570,7 @@ const ProjectManagement = () => {
                   <th className="px-6 py-3.5">Code</th>
                   <th className="px-6 py-3.5">Project Lead</th>
                   <th className="px-6 py-3.5">Project Manager</th>
-                  <th className="px-6 py-3.5">Team Members</th>
+                  <th className="px-6 py-3.5">Team</th>
                   <th className="px-6 py-3.5">Repository</th>
                   <th className="px-6 py-3.5">Status</th>
                   {showActions && (
@@ -615,16 +615,16 @@ const ProjectManagement = () => {
                     </td>
 
                     <td className="px-6 py-4 text-xs">
-                      {(() => {
-                        const count =
-                          projectTeams?.[String(project.id)]?.length || 0;
-
-                        return (
-                          <span className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                            {count} {count === 1 ? "member" : "members"}
-                          </span>
-                        );
-                      })()}
+                      {project.teamName ? (
+                        <div>
+                          <span className="font-medium text-slate-700 dark:text-slate-300">{project.teamName}</span>
+                          <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+                            ID {project.teamId} &ndash; {project.teamMemberCount ?? 0} {(project.teamMemberCount ?? 0) === 1 ? "member" : "members"}
+                          </p>
+                        </div>
+                      ) : (
+                        <span className="text-slate-400 dark:text-slate-500">No team</span>
+                      )}
                     </td>
 
                     <td className="px-6 py-4" onClick={(event) => event.stopPropagation()}>
