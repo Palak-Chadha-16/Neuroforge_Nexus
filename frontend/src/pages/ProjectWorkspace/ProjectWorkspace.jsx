@@ -6,6 +6,7 @@ import {
   PiCalendarBlank,
   PiCheck,
   PiListChecks,
+  PiKanban,
   PiPencilSimple,
   PiPlus,
   PiTrash,
@@ -30,6 +31,51 @@ import DevOpsPipelineView from "../../components/project/DevOpsPipelineView.jsx"
 const PROJECT_ROLES = ["Team Lead", "Developer", "Tester", "QA"];
 
 const TASK_STATUSES = ["To Do", "In Progress", "In Review", "Done"];
+
+const TASK_COLUMNS = [
+  {
+    id: "To Do",
+    dot: "bg-slate-400",
+    border: "border-t-slate-400",
+    surface: "bg-slate-50 dark:bg-slate-900/40",
+  },
+  {
+    id: "In Progress",
+    dot: "bg-blue-500",
+    border: "border-t-blue-500",
+    surface: "bg-blue-50/60 dark:bg-blue-950/20",
+  },
+  {
+    id: "In Review",
+    dot: "bg-violet-500",
+    border: "border-t-violet-500",
+    surface: "bg-violet-50/60 dark:bg-violet-950/20",
+  },
+  {
+    id: "Done",
+    dot: "bg-emerald-500",
+    border: "border-t-emerald-500",
+    surface: "bg-emerald-50/60 dark:bg-emerald-950/20",
+  },
+];
+
+const normalizeTaskStatus = (status) => {
+  const value = String(status || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, "_");
+
+  if (["TODO", "TO_DO", "PENDING"].includes(value)) return "To Do";
+  if (["IN_PROGRESS", "INPROGRESS"].includes(value)) return "In Progress";
+  if (
+    ["IN_REVIEW", "READY_FOR_TESTING", "IN_TESTING", "IN_QA"].includes(value)
+  ) {
+    return "In Review";
+  }
+  if (["DONE", "COMPLETED", "COMPLETE"].includes(value)) return "Done";
+
+  return "To Do";
+};
 
 const PRIORITIES = ["Low", "Medium", "High", "Critical"];
 
@@ -76,6 +122,7 @@ const ProjectWorkspace = () => {
     error: tasksError,
     createTask,
     updateTask,
+    updateTaskStatus,
     deleteTask,
     getSubtasksByTaskId,
   } = useTasks();
@@ -101,12 +148,15 @@ const ProjectWorkspace = () => {
     const querySection =
       location.state?.section ||
       new URLSearchParams(location.search).get("section");
+
     if (!querySection || querySection === activeSection) return undefined;
 
     let active = true;
+
     Promise.resolve().then(() => {
       if (active) setActiveSection(querySection);
     });
+
     return () => {
       active = false;
     };
@@ -135,6 +185,10 @@ const ProjectWorkspace = () => {
 
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
+  const [taskViewMode, setTaskViewMode] = useState("board");
+  const [draggedTaskId, setDraggedTaskId] = useState(null);
+  const [dragOverStatus, setDragOverStatus] = useState(null);
+  const [updatingTaskId, setUpdatingTaskId] = useState(null);
 
   const [taskForm, setTaskForm] = useState(EMPTY_TASK_FORM);
 
@@ -143,13 +197,14 @@ const ProjectWorkspace = () => {
   const [showConnectRepo, setShowConnectRepo] = useState(false);
 
   useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (e.key === "Escape") {
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
         setTaskMenuAnchor(null);
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
+
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
@@ -167,25 +222,28 @@ const ProjectWorkspace = () => {
     if (!project) return undefined;
 
     let active = true;
+
     Promise.resolve().then(() => {
       if (active) {
         setProjectForm({
-        name: project.name || "",
-        description: project.description || "",
-        code: project.code || "",
-        repository: project.repository || "",
-        status: project.status || "Not Started",
-        startDate: project.startDate || "",
-        endDate: project.endDate || "",
+          name: project.name || "",
+          description: project.description || "",
+          code: project.code || "",
+          repository: project.repository || "",
+          status: project.status || "Not Started",
+          startDate: project.startDate || "",
+          endDate: project.endDate || "",
         });
       }
     });
+
     return () => {
       active = false;
     };
   }, [project]);
 
   const activeProjectId = project?.id;
+
   const projectMembers = useMemo(() => {
     if (!activeProjectId) return [];
 
@@ -237,9 +295,11 @@ const ProjectWorkspace = () => {
         (member) => String(member.userId) === String(user.id)
       );
 
-      return !alreadyInProject &&
+      return (
+        !alreadyInProject &&
         user.status !== "Inactive" &&
-        allowedSystemRoles.includes(normalizeRole(user.role));
+        allowedSystemRoles.includes(normalizeRole(user.role))
+      );
     });
   }, [users, project?.id, projectMembers, memberForm.projectRole]);
 
@@ -247,7 +307,9 @@ const ProjectWorkspace = () => {
     if (!activeProjectId) return [];
 
     return tasks.filter((task) => {
-      const taskProjId = task.projectId ?? task.project?.id ?? task.project_id;
+      const taskProjId =
+        task.projectId ?? task.project?.id ?? task.project_id;
+
       return String(taskProjId) === String(activeProjectId);
     });
   }, [tasks, activeProjectId]);
@@ -337,12 +399,18 @@ const ProjectWorkspace = () => {
 
   const currentRole = normalizeRole(currentUser?.role);
   const currentUserId = currentUser?.id ?? currentUser?._id;
+
   const isProjectManager =
     currentUserId != null &&
-    String(project?.projectManager?.id ?? project?.projectManagerId) === String(currentUserId);
+    String(
+      project?.projectManager?.id ?? project?.projectManagerId
+    ) === String(currentUserId);
+
   const isProjectLead =
     currentUserId != null &&
-    String(project?.projectLead?.id ?? project?.projectLeadId) === String(currentUserId);
+    String(
+      project?.projectLead?.id ?? project?.projectLeadId
+    ) === String(currentUserId);
 
   const canManageProjects =
     currentRole === ROLES.ADMIN ||
@@ -357,11 +425,14 @@ const ProjectWorkspace = () => {
   const canManageTasks = canManageProjects;
 
   const userSkillStr = String(currentUser?.skill || "").toLowerCase();
+
   const canTriggerPipeline =
     canManageProjects ||
     userSkillStr.includes("devops") ||
     (Array.isArray(currentUser?.skills) &&
-      currentUser.skills.some((s) => String(s).toLowerCase().includes("devops")));
+      currentUser.skills.some((skill) =>
+        String(skill).toLowerCase().includes("devops")
+      ));
 
   const handleProjectFormChange = (event) => {
     const { name, value } = event.target;
@@ -448,7 +519,7 @@ const ProjectWorkspace = () => {
 
     let result;
 
-        if (editingMember) {
+    if (editingMember) {
       result = await updateProjectMember(
         project.id,
         editingMember.userId,
@@ -514,8 +585,8 @@ const ProjectWorkspace = () => {
     const defaultAssignee = teamLeadId
       ? String(teamLeadId)
       : projectMembers[0]?.userId
-      ? String(projectMembers[0].userId)
-      : "";
+        ? String(projectMembers[0].userId)
+        : "";
 
     setTaskForm({
       ...EMPTY_TASK_FORM,
@@ -528,7 +599,8 @@ const ProjectWorkspace = () => {
   const openEditTask = (task) => {
     setEditingTask(task);
 
-    const existingAssignee = task.assigneeId ?? task.assignee?.id ?? "";
+    const existingAssignee =
+      task.assigneeId ?? task.assignee?.id ?? "";
 
     setTaskForm({
       title: task.title || "",
@@ -583,7 +655,7 @@ const ProjectWorkspace = () => {
 
     let result;
 
-        if (editingTask) {
+    if (editingTask) {
       result = await updateTask(payload);
     } else {
       result = await createTask(payload);
@@ -592,10 +664,7 @@ const ProjectWorkspace = () => {
     if (result?.success) {
       setShowTaskModal(false);
       setEditingTask(null);
-
-      setTaskForm({
-        ...EMPTY_TASK_FORM,
-      });
+      setTaskForm({ ...EMPTY_TASK_FORM });
     } else {
       alert(result?.message || "Failed to save parent task.");
     }
@@ -604,7 +673,7 @@ const ProjectWorkspace = () => {
   const handleDeleteTask = async () => {
     if (!confirmDeleteTask) return;
 
-        const result = await deleteTask(confirmDeleteTask.id);
+    const result = await deleteTask(confirmDeleteTask.id);
 
     if (!result?.success) {
       alert(result?.message || "Failed to delete task.");
@@ -617,15 +686,18 @@ const ProjectWorkspace = () => {
     const total = projectTasks.length;
 
     const toDo = projectTasks.filter(
-      (task) => task.status === "To Do"
+      (task) =>
+        normalizeTaskStatus(task.status || task.boardStatus) === "To Do"
     ).length;
 
     const inProgress = projectTasks.filter(
-      (task) => task.status === "In Progress"
+      (task) =>
+        normalizeTaskStatus(task.status || task.boardStatus) === "In Progress"
     ).length;
 
     const completed = projectTasks.filter(
-      (task) => task.status === "Done"
+      (task) =>
+        normalizeTaskStatus(task.status || task.boardStatus) === "Done"
     ).length;
 
     return {
@@ -635,6 +707,58 @@ const ProjectWorkspace = () => {
       completed,
     };
   }, [projectTasks]);
+
+  const handleParentTaskStatusChange = async (task, nextStatus) => {
+    if (!task?.id || updatingTaskId === String(task.id)) return;
+
+    const currentStatus = normalizeTaskStatus(
+      task.status || task.boardStatus
+    );
+
+    if (currentStatus === nextStatus) return;
+
+    setUpdatingTaskId(String(task.id));
+
+    try {
+      const result =
+        typeof updateTaskStatus === "function"
+          ? await updateTaskStatus(task.id, nextStatus)
+          : await updateTask({
+              ...task,
+              projectId: task.projectId ?? project?.id,
+              status: nextStatus,
+            });
+
+      if (result?.success === false) {
+        alert(result.message || "Unable to update the task status.");
+      }
+    } catch (error) {
+      console.error("Failed to update parent task status:", error);
+      alert("Unable to update the task status. Please try again.");
+    } finally {
+      setUpdatingTaskId(null);
+      setDraggedTaskId(null);
+      setDragOverStatus(null);
+    }
+  };
+
+  const handleParentTaskDrop = async (event, targetStatus) => {
+    event.preventDefault();
+    setDragOverStatus(null);
+
+    const taskId =
+      event.dataTransfer?.getData("text/plain") || draggedTaskId;
+
+    const draggedTask = projectTasks.find(
+      (task) => String(task.id) === String(taskId)
+    );
+
+    setDraggedTaskId(null);
+
+    if (!draggedTask) return;
+
+    await handleParentTaskStatusChange(draggedTask, targetStatus);
+  };
 
   if (!project) {
     return (
@@ -666,7 +790,6 @@ const ProjectWorkspace = () => {
     <div className="min-h-screen bg-transparent p-4 text-[#172033] dark:text-slate-100 md:p-6">
       <div className="mx-auto max-w-7xl">
         <div className="mb-6">
-          {/* HIERARCHICAL BREADCRUMB */}
           <div className="mb-3 flex items-center gap-2 text-xs font-medium text-[#64748B] dark:text-slate-400">
             <button
               type="button"
@@ -675,14 +798,19 @@ const ProjectWorkspace = () => {
             >
               Projects
             </button>
+
             <span>/</span>
+
             <span className="font-semibold text-[#172033] dark:text-slate-200">
               {project.name}
             </span>
           </div>
 
           {projectMembersError && (
-            <p role="alert" className="border-b border-red-200 bg-red-50 px-5 py-3 text-sm text-red-700">
+            <p
+              role="alert"
+              className="border-b border-red-200 bg-red-50 px-5 py-3 text-sm text-red-700"
+            >
               {projectMembersError}
             </p>
           )}
@@ -707,10 +835,10 @@ const ProjectWorkspace = () => {
                         project.status === "Completed"
                           ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/50 dark:text-emerald-300"
                           : project.status === "In Progress"
-                          ? "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900/60 dark:bg-blue-950/50 dark:text-blue-300"
-                          : project.status === "On Hold"
-                          ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/50 dark:text-amber-300"
-                          : "border-slate-200 bg-slate-100 text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                            ? "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900/60 dark:bg-blue-950/50 dark:text-blue-300"
+                            : project.status === "On Hold"
+                              ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/50 dark:text-amber-300"
+                              : "border-slate-200 bg-slate-100 text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
                       }`}
                     >
                       {project.status}
@@ -801,7 +929,7 @@ const ProjectWorkspace = () => {
               }`}
             >
               <PiRocket size={16} />
-              <span>DevOps & CI/CD</span>
+              <span>DevOps &amp; CI/CD</span>
             </button>
           </div>
         </div>
@@ -810,14 +938,18 @@ const ProjectWorkspace = () => {
           <div className="space-y-6">
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
               <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-[#0f172a]">
-                <p className="text-sm text-[#64748B] dark:text-slate-400">Project Status</p>
+                <p className="text-sm text-[#64748B] dark:text-slate-400">
+                  Project Status
+                </p>
                 <p className="mt-2 text-xl font-bold text-[#172033] dark:text-white">
                   {project.status || "Not Started"}
                 </p>
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-[#0f172a]">
-                <p className="text-sm text-[#64748B] dark:text-slate-400">Project Lead</p>
+                <p className="text-sm text-[#64748B] dark:text-slate-400">
+                  Project Lead
+                </p>
                 <p className="mt-2 text-xl font-bold text-[#172033] dark:text-white">
                   {project.projectLead?.fullName ||
                     project.projectLead?.name ||
@@ -827,7 +959,9 @@ const ProjectWorkspace = () => {
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-[#0f172a]">
-                <p className="text-sm text-[#64748B] dark:text-slate-400">Project Manager</p>
+                <p className="text-sm text-[#64748B] dark:text-slate-400">
+                  Project Manager
+                </p>
                 <p className="mt-2 text-xl font-bold text-[#172033] dark:text-white">
                   {project.projectManager?.fullName ||
                     project.projectManager?.name ||
@@ -837,42 +971,39 @@ const ProjectWorkspace = () => {
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-[#0f172a]">
-                <p className="text-sm text-[#64748B] dark:text-slate-400">Team Members</p>
+                <p className="text-sm text-[#64748B] dark:text-slate-400">
+                  Team Members
+                </p>
                 <p className="mt-2 text-xl font-bold text-[#172033] dark:text-white">
                   {projectMembers.length}
                 </p>
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-[#0f172a]">
-                <p className="text-sm text-[#64748B] dark:text-slate-400">Repository</p>
+                <p className="text-sm text-[#64748B] dark:text-slate-400">
+                  Repository
+                </p>
 
                 <div className="mt-2.5">
                   {project.repository ? (
-                    <div className="flex items-center gap-2">
-                      <a
-                        href={
-                          project.repository.startsWith("http")
-                            ? project.repository
-                            : `https://${project.repository}`
-                        }
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-sm font-semibold text-slate-800 shadow-xs transition hover:border-slate-400 hover:bg-slate-100 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:border-slate-600 dark:hover:bg-slate-700"
-                        title={`Open GitHub Repository: ${project.repository}`}
-                      >
-                        <PiGithubLogo size={20} className="text-slate-900 dark:text-white" />
-                        <span>Connected</span>
-                        <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse ml-0.5" />
-                      </a>
-                      <button
-                        type="button"
-                        onClick={() => setShowConnectRepo(true)}
-                        className="rounded-xl border border-slate-200 bg-white p-2 text-slate-500 hover:bg-slate-50 hover:text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-200 transition"
-                        title="Edit or disconnect repository"
-                      >
-                        <PiPencilSimple size={16} />
-                      </button>
-                    </div>
+                    <a
+                      href={
+                        project.repository.startsWith("http")
+                          ? project.repository
+                          : `https://${project.repository}`
+                      }
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-sm font-semibold text-slate-800 shadow-xs transition hover:border-slate-400 hover:bg-slate-100 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:border-slate-600 dark:hover:bg-slate-700"
+                      title={`Open GitHub Repository: ${project.repository}`}
+                    >
+                      <PiGithubLogo
+                        size={20}
+                        className="text-slate-900 dark:text-white"
+                      />
+                      <span>Connected</span>
+                      <span className="ml-0.5 h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
+                    </a>
                   ) : (
                     <button
                       type="button"
@@ -890,7 +1021,10 @@ const ProjectWorkspace = () => {
 
             <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-[#0f172a]">
               <div className="mb-5 flex items-center gap-3">
-                <PiCalendarBlank size={22} className="text-[#2563EB] dark:text-blue-400" />
+                <PiCalendarBlank
+                  size={22}
+                  className="text-[#2563EB] dark:text-blue-400"
+                />
 
                 <h2 className="text-lg font-bold text-[#172033] dark:text-white">
                   Project Timeline
@@ -899,14 +1033,18 @@ const ProjectWorkspace = () => {
 
               <div className="grid gap-6 md:grid-cols-2">
                 <div>
-                  <p className="text-sm text-[#64748B] dark:text-slate-400">Start Date</p>
+                  <p className="text-sm text-[#64748B] dark:text-slate-400">
+                    Start Date
+                  </p>
                   <p className="mt-1 font-semibold text-[#172033] dark:text-slate-200">
                     {project.startDate || "Not set"}
                   </p>
                 </div>
 
                 <div>
-                  <p className="text-sm text-[#64748B] dark:text-slate-400">End Date</p>
+                  <p className="text-sm text-[#64748B] dark:text-slate-400">
+                    End Date
+                  </p>
                   <p className="mt-1 font-semibold text-[#172033] dark:text-slate-200">
                     {project.endDate || "Not set"}
                   </p>
@@ -921,7 +1059,10 @@ const ProjectWorkspace = () => {
             <div className="flex flex-col justify-between gap-4 border-b border-slate-200 p-5 dark:border-slate-800 md:flex-row md:items-center">
               <div>
                 <div className="flex items-center gap-2">
-                  <PiUsersThree size={24} className="text-[#2563EB] dark:text-blue-400" />
+                  <PiUsersThree
+                    size={24}
+                    className="text-[#2563EB] dark:text-blue-400"
+                  />
 
                   <h2 className="text-xl font-bold text-[#172033] dark:text-white">
                     Project Team
@@ -988,9 +1129,7 @@ const ProjectWorkspace = () => {
                       <th className="px-5 py-4">Status</th>
 
                       {canManageTeam && (
-                        <th className="px-5 py-4 text-right">
-                          Actions
-                        </th>
+                        <th className="px-5 py-4 text-right">Actions</th>
                       )}
                     </tr>
                   </thead>
@@ -1046,7 +1185,11 @@ const ProjectWorkspace = () => {
                               title="Update your status"
                             >
                               {MEMBER_STATUSES.map((status) => (
-                                <option key={status} value={status} className="dark:bg-[#1e293b] dark:text-white">
+                                <option
+                                  key={status}
+                                  value={status}
+                                  className="dark:bg-[#1e293b] dark:text-white"
+                                >
                                   {status}
                                 </option>
                               ))}
@@ -1074,9 +1217,7 @@ const ProjectWorkspace = () => {
                               </button>
 
                               <button
-                                onClick={() =>
-                                  setConfirmDeleteMember(member)
-                                }
+                                onClick={() => setConfirmDeleteMember(member)}
                                 className="rounded-lg border border-red-200 bg-red-50 p-2 text-red-600 transition hover:bg-red-100 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950/60"
                                 title="Delete"
                               >
@@ -1099,7 +1240,10 @@ const ProjectWorkspace = () => {
             <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
               <div>
                 <div className="flex items-center gap-2.5">
-                  <PiListChecks size={26} className="text-[#2563EB] dark:text-blue-400" />
+                  <PiListChecks
+                    size={26}
+                    className="text-[#2563EB] dark:text-blue-400"
+                  />
 
                   <h2 className="text-2xl font-bold text-[#172033] dark:text-white">
                     Task Management
@@ -1143,7 +1287,9 @@ const ProjectWorkspace = () => {
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-[#0f172a]">
-                <p className="text-sm font-medium text-slate-500 dark:text-slate-400">To Do</p>
+                <p className="text-sm font-medium text-slate-500 dark:text-slate-400">
+                  To Do
+                </p>
 
                 <p className="mt-2 text-2xl font-bold text-slate-900 dark:text-white">
                   {taskStats.toDo}
@@ -1151,7 +1297,9 @@ const ProjectWorkspace = () => {
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-[#0f172a]">
-                <p className="text-sm font-medium text-slate-500 dark:text-slate-400">In Progress</p>
+                <p className="text-sm font-medium text-slate-500 dark:text-slate-400">
+                  In Progress
+                </p>
 
                 <p className="mt-2 text-2xl font-bold text-blue-600 dark:text-blue-400">
                   {taskStats.inProgress}
@@ -1159,7 +1307,9 @@ const ProjectWorkspace = () => {
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-[#0f172a]">
-                <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Completed</p>
+                <p className="text-sm font-medium text-slate-500 dark:text-slate-400">
+                  Completed
+                </p>
 
                 <p className="mt-2 text-2xl font-bold text-emerald-600 dark:text-emerald-400">
                   {taskStats.completed}
@@ -1168,10 +1318,49 @@ const ProjectWorkspace = () => {
             </div>
 
             <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-[#0f172a]">
-              <div className="border-b border-slate-200 p-5 dark:border-slate-800">
-                <h3 className="text-lg font-bold text-[#172033] dark:text-white">
-                  All Parent Tasks
-                </h3>
+              <div className="flex flex-col justify-between gap-3 border-b border-slate-200 p-5 dark:border-slate-800 sm:flex-row sm:items-center">
+                <div>
+                  <h3 className="text-lg font-bold text-[#172033] dark:text-white">
+                    All Parent Tasks
+                  </h3>
+                  <p className="mt-1 text-xs text-[#64748B] dark:text-slate-400">
+                    Move tasks between workflow stages by dragging a card or
+                    using its status selector.
+                  </p>
+                </div>
+
+                <div
+                  className="inline-flex w-fit items-center rounded-xl border border-slate-200 bg-slate-100 p-1 dark:border-slate-700 dark:bg-slate-900"
+                  aria-label="Parent task view"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setTaskViewMode("board")}
+                    aria-pressed={taskViewMode === "board"}
+                    className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                      taskViewMode === "board"
+                        ? "bg-white text-[#2563EB] shadow-sm dark:bg-slate-800 dark:text-blue-400"
+                        : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+                    }`}
+                  >
+                    <PiKanban size={17} />
+                    Board
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setTaskViewMode("list")}
+                    aria-pressed={taskViewMode === "list"}
+                    className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                      taskViewMode === "list"
+                        ? "bg-white text-[#2563EB] shadow-sm dark:bg-slate-800 dark:text-blue-400"
+                        : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+                    }`}
+                  >
+                    <PiListChecks size={17} />
+                    List
+                  </button>
+                </div>
               </div>
 
               {tasksLoading ? (
@@ -1198,7 +1387,7 @@ const ProjectWorkspace = () => {
                     into subtasks.
                   </p>
                 </div>
-              ) : (
+              ) : taskViewMode === "list" ? (
                 <div className="overflow-x-auto">
                   <table className="w-full min-w-[900px]">
                     <thead>
@@ -1212,9 +1401,7 @@ const ProjectWorkspace = () => {
                         <th className="px-5 py-4">Deadline</th>
 
                         {canManageTasks && (
-                          <th className="px-5 py-4 text-right">
-                            Actions
-                          </th>
+                          <th className="px-5 py-4 text-right">Actions</th>
                         )}
                       </tr>
                     </thead>
@@ -1224,9 +1411,7 @@ const ProjectWorkspace = () => {
                         <tr
                           key={task.id}
                           onClick={() =>
-                            navigate(
-                              `/projects/${project.id}/tasks/${task.id}`
-                            )
+                            navigate(`/projects/${project.id}/tasks/${task.id}`)
                           }
                           className="group cursor-pointer border-b border-slate-200 transition last:border-0 hover:bg-[#F1F5F9] dark:border-slate-800 dark:hover:bg-slate-800/50"
                         >
@@ -1286,10 +1471,10 @@ const ProjectWorkspace = () => {
                           <td className="px-5 py-4">
                             <span
                               className={`inline-block rounded-full border px-3 py-1 text-xs font-medium ${getStatusClass(
-                                task.status
+                                normalizeTaskStatus(task.status || task.boardStatus)
                               )}`}
                             >
-                              {task.status}
+                              {normalizeTaskStatus(task.status || task.boardStatus)}
                             </span>
                           </td>
 
@@ -1299,7 +1484,7 @@ const ProjectWorkspace = () => {
                                 task.priority
                               )}`}
                             >
-                              {task.priority}
+                              {task.priority || "Medium"}
                             </span>
                           </td>
 
@@ -1323,10 +1508,13 @@ const ProjectWorkspace = () => {
                                   type="button"
                                   onClick={(event) => {
                                     event.stopPropagation();
+
                                     if (taskMenuAnchor?.task?.id === task.id) {
                                       setTaskMenuAnchor(null);
                                     } else {
-                                      const rect = event.currentTarget.getBoundingClientRect();
+                                      const rect =
+                                        event.currentTarget.getBoundingClientRect();
+
                                       setTaskMenuAnchor({
                                         task,
                                         top: rect.bottom + 6,
@@ -1342,7 +1530,7 @@ const ProjectWorkspace = () => {
                                   title="Task actions"
                                   aria-expanded={taskMenuAnchor?.task?.id === task.id}
                                 >
-                                  <PiDotsThreeVertical size={18} weight="bold" />
+                                  <PiDotsThreeVertical size={18} />
                                 </button>
                               </div>
                             </td>
@@ -1351,6 +1539,217 @@ const ProjectWorkspace = () => {
                       ))}
                     </tbody>
                   </table>
+                </div>
+              ) : (
+                <div className="p-4 sm:p-5">
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    {TASK_COLUMNS.map((column) => {
+                      const columnTasks = projectTasks.filter(
+                        (task) =>
+                          normalizeTaskStatus(task.status || task.boardStatus) ===
+                          column.id
+                      );
+
+                      const isDropTarget = dragOverStatus === column.id;
+
+                      return (
+                        <section
+                          key={column.id}
+                          aria-label={`${column.id} tasks`}
+                          onDragOver={(event) => {
+                            event.preventDefault();
+                            event.dataTransfer.dropEffect = "move";
+                            setDragOverStatus(column.id);
+                          }}
+                          onDragLeave={(event) => {
+                            if (
+                              !event.currentTarget.contains(event.relatedTarget)
+                            ) {
+                              setDragOverStatus(null);
+                            }
+                          }}
+                          onDrop={(event) =>
+                            handleParentTaskDrop(event, column.id)
+                          }
+                          className={`flex min-h-[330px] flex-col rounded-2xl border border-t-4 p-3 transition ${column.border} ${column.surface} ${
+                            isDropTarget ? "ring-2 ring-blue-500/40" : ""
+                          }`}
+                        >
+                          <div className="mb-3 flex items-center justify-between gap-2 px-1">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`h-2.5 w-2.5 rounded-full ${column.dot}`}
+                              />
+                              <h4 className="text-sm font-bold text-[#172033] dark:text-white">
+                                {column.id === "Done" ? "Completed" : column.id}
+                              </h4>
+                            </div>
+
+                            <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-xs font-semibold text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                              {columnTasks.length}
+                            </span>
+                          </div>
+
+                          <div className="flex flex-1 flex-col gap-3">
+                            {columnTasks.length === 0 ? (
+                              <div
+                                className={`flex min-h-[120px] flex-1 items-center justify-center rounded-xl border border-dashed p-4 text-center text-xs text-slate-500 dark:border-slate-700 dark:text-slate-400 ${
+                                  isDropTarget
+                                    ? "border-blue-400 bg-blue-50/70 dark:bg-blue-950/30"
+                                    : "border-slate-300/80 dark:border-slate-700"
+                                }`}
+                              >
+                                {isDropTarget
+                                  ? "Drop task here"
+                                  : "No tasks in this stage"}
+                              </div>
+                            ) : (
+                              columnTasks.map((task) => {
+                                const subtaskCount = getSubtasksByTaskId
+                                  ? getSubtasksByTaskId(task.id).length
+                                  : 0;
+
+                                const taskIsUpdating =
+                                  updatingTaskId === String(task.id);
+
+                                return (
+                                  <article
+                                    key={task.id}
+                                    draggable={!taskIsUpdating}
+                                    onDragStart={(event) => {
+                                      setDraggedTaskId(String(task.id));
+                                      event.dataTransfer.effectAllowed = "move";
+                                      event.dataTransfer.setData(
+                                        "text/plain",
+                                        String(task.id)
+                                      );
+                                    }}
+                                    onDragEnd={() => {
+                                      setDraggedTaskId(null);
+                                      setDragOverStatus(null);
+                                    }}
+                                    onClick={() =>
+                                      navigate(
+                                        `/projects/${project.id}/tasks/${task.id}`
+                                      )
+                                    }
+                                    onKeyDown={(event) => {
+                                      if (
+                                        event.key === "Enter" ||
+                                        event.key === " "
+                                      ) {
+                                        event.preventDefault();
+                                        navigate(
+                                          `/projects/${project.id}/tasks/${task.id}`
+                                        );
+                                      }
+                                    }}
+                                    role="button"
+                                    tabIndex={0}
+                                    className={`group cursor-grab rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-md active:cursor-grabbing dark:border-slate-700 dark:bg-[#111b2b] dark:hover:border-blue-700 ${
+                                      draggedTaskId === String(task.id)
+                                        ? "opacity-50"
+                                        : ""
+                                    } ${
+                                      taskIsUpdating
+                                        ? "pointer-events-none opacity-60"
+                                        : ""
+                                    }`}
+                                    title="Drag to change status or click to open the task"
+                                  >
+                                    <div className="mb-3 flex items-start justify-between gap-2">
+                                      <span
+                                        className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${getPriorityClass(
+                                          task.priority || "Medium"
+                                        )}`}
+                                      >
+                                        {task.priority || "Medium"}
+                                      </span>
+
+                                      <span className="text-[11px] font-medium text-slate-400">
+                                        TASK-{task.id}
+                                      </span>
+                                    </div>
+
+                                    <h5 className="text-sm font-bold leading-5 text-[#172033] group-hover:text-[#2563EB] dark:text-slate-100 dark:group-hover:text-blue-400">
+                                      {task.title || "Untitled task"}
+                                    </h5>
+
+                                    <p className="mt-2 line-clamp-3 min-h-[2.5rem] text-xs leading-5 text-[#64748B] dark:text-slate-400">
+                                      {task.description ||
+                                        "No description provided."}
+                                    </p>
+
+                                    <div className="mt-4 flex items-center gap-2 border-t border-slate-100 pt-3 dark:border-slate-800">
+                                      <PiUserCircle
+                                        size={19}
+                                        className="shrink-0 text-slate-400"
+                                      />
+
+                                      <span className="min-w-0 flex-1 truncate text-xs font-medium text-slate-600 dark:text-slate-300">
+                                        {getTaskAssigneeName(task)}
+                                      </span>
+                                    </div>
+
+                                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                                      <span className="inline-flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                                        <PiListChecks size={14} />
+                                        {subtaskCount}{" "}
+                                        {subtaskCount === 1 ? "subtask" : "subtasks"}
+                                      </span>
+
+                                      <span className="inline-flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                                        <PiCalendarBlank size={14} />
+                                        {task.dueDate || "No deadline"}
+                                      </span>
+                                    </div>
+
+                                    <div
+                                      className="mt-3"
+                                      onClick={(event) => event.stopPropagation()}
+                                    >
+                                      <label
+                                        className="sr-only"
+                                        htmlFor={`parent-task-status-${task.id}`}
+                                      >
+                                        Status for {task.title}
+                                      </label>
+
+                                      <select
+                                        id={`parent-task-status-${task.id}`}
+                                        value={normalizeTaskStatus(
+                                          task.status || task.boardStatus
+                                        )}
+                                        disabled={taskIsUpdating}
+                                        onChange={(event) =>
+                                          handleParentTaskStatusChange(
+                                            task,
+                                            event.target.value
+                                          )
+                                        }
+                                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs font-semibold text-slate-700 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-500/15 disabled:cursor-wait disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                                      >
+                                        {TASK_STATUSES.map((statusOption) => (
+                                          <option
+                                            key={statusOption}
+                                            value={statusOption}
+                                          >
+                                            {statusOption === "Done"
+                                              ? "Completed"
+                                              : statusOption}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  </article>
+                                );
+                              })
+                            )}
+                          </div>
+                        </section>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </div>
@@ -1559,10 +1958,16 @@ const ProjectWorkspace = () => {
                     className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-[#172033] outline-none focus:border-[#2563EB] focus:ring-2 focus:ring-blue-500/15 dark:border-slate-700 dark:bg-[#1e293b] dark:text-white"
                     required
                   >
-                    <option value="" className="dark:bg-[#1e293b] dark:text-white">Select a user</option>
+                    <option value="" className="dark:bg-[#1e293b] dark:text-white">
+                      Select a user
+                    </option>
 
                     {availableUsers.map((user) => (
-                      <option key={user.id} value={user.id} className="dark:bg-[#1e293b] dark:text-white">
+                      <option
+                        key={user.id}
+                        value={user.id}
+                        className="dark:bg-[#1e293b] dark:text-white"
+                      >
                         {user.fullName || user.name} — {user.email}
                       </option>
                     ))}
@@ -1611,7 +2016,11 @@ const ProjectWorkspace = () => {
                   required
                 >
                   {PROJECT_ROLES.map((role) => (
-                    <option key={role} value={role} className="dark:bg-[#1e293b] dark:text-white">
+                    <option
+                      key={role}
+                      value={role}
+                      className="dark:bg-[#1e293b] dark:text-white"
+                    >
                       {role}
                     </option>
                   ))}
@@ -1712,21 +2121,31 @@ const ProjectWorkspace = () => {
                   onChange={handleTaskFormChange}
                   className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-[#172033] outline-none transition focus:border-[#2563EB] focus:ring-2 focus:ring-blue-500/15 dark:border-slate-700 dark:bg-[#1e293b] dark:text-white"
                 >
-                  <option value="" className="dark:bg-[#1e293b] dark:text-white">Select Assignee</option>
+                  <option value="" className="dark:bg-[#1e293b] dark:text-white">
+                    Select Assignee
+                  </option>
 
-                  {projectMembers.map((m) => (
-                    <option key={m.userId} value={m.userId} className="dark:bg-[#1e293b] dark:text-white">
-                      {m.user?.fullName ||
-                        m.user?.name ||
-                        `User #${m.userId}`}{" "}
-                      — {m.projectRole}
+                  {projectMembers.map((member) => (
+                    <option
+                      key={member.userId}
+                      value={member.userId}
+                      className="dark:bg-[#1e293b] dark:text-white"
+                    >
+                      {member.user?.fullName ||
+                        member.user?.name ||
+                        `User #${member.userId}`}{" "}
+                      — {member.projectRole}
                     </option>
                   ))}
 
                   {projectMembers.length === 0 &&
-                    users.map((u) => (
-                      <option key={u.id} value={u.id} className="dark:bg-[#1e293b] dark:text-white">
-                        {u.fullName || u.name} ({u.email})
+                    users.map((user) => (
+                      <option
+                        key={user.id}
+                        value={user.id}
+                        className="dark:bg-[#1e293b] dark:text-white"
+                      >
+                        {user.fullName || user.name} ({user.email})
                       </option>
                     ))}
                 </select>
@@ -1749,7 +2168,11 @@ const ProjectWorkspace = () => {
                     className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-[#172033] outline-none focus:border-[#2563EB] focus:ring-2 focus:ring-blue-500/15 dark:border-slate-700 dark:bg-[#1e293b] dark:text-white"
                   >
                     {PRIORITIES.map((priority) => (
-                      <option key={priority} value={priority} className="dark:bg-[#1e293b] dark:text-white">
+                      <option
+                        key={priority}
+                        value={priority}
+                        className="dark:bg-[#1e293b] dark:text-white"
+                      >
                         {priority}
                       </option>
                     ))}
@@ -1768,7 +2191,11 @@ const ProjectWorkspace = () => {
                     className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-[#172033] outline-none focus:border-[#2563EB] focus:ring-2 focus:ring-blue-500/15 dark:border-slate-700 dark:bg-[#1e293b] dark:text-white"
                   >
                     {TASK_STATUSES.map((status) => (
-                      <option key={status} value={status} className="dark:bg-[#1e293b] dark:text-white">
+                      <option
+                        key={status}
+                        value={status}
+                        className="dark:bg-[#1e293b] dark:text-white"
+                      >
                         {status}
                       </option>
                     ))}
@@ -1892,112 +2319,129 @@ const ProjectWorkspace = () => {
         </div>
       )}
 
-      {/* Floating Action Menu rendered OUTSIDE the table/list via React Portal */}
-      {taskMenuAnchor && createPortal(
-        <div
-          className="fixed inset-0 z-50 overflow-hidden"
-          onClick={() => setTaskMenuAnchor(null)}
-        >
+      {taskMenuAnchor &&
+        createPortal(
           <div
-            className="fixed z-50 w-64 rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl dark:border-slate-700 dark:bg-[#1e293b] text-left animate-in fade-in zoom-in-95 duration-150"
-            style={{
-              top: `${Math.min(taskMenuAnchor.top, window.innerHeight - 260)}px`,
-              right: `${Math.max(16, taskMenuAnchor.right)}px`,
-            }}
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-50 overflow-hidden"
+            onClick={() => setTaskMenuAnchor(null)}
           >
-            <div className="flex items-center justify-between px-2.5 py-1.5 mb-1.5 border-b border-slate-100 dark:border-slate-700/60">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">
-                Parent Task Actions
-              </span>
-              <button
-                type="button"
-                onClick={() => setTaskMenuAnchor(null)}
-                className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-200 transition"
-              >
-                <PiX size={14} />
-              </button>
+            <div
+              className="fixed z-50 w-64 rounded-2xl border border-slate-200 bg-white p-2 text-left shadow-2xl dark:border-slate-700 dark:bg-[#1e293b] animate-in fade-in zoom-in-95 duration-150"
+              style={{
+                top: `${Math.min(
+                  taskMenuAnchor.top,
+                  window.innerHeight - 260
+                )}px`,
+                right: `${Math.max(16, taskMenuAnchor.right)}px`,
+              }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="mb-1.5 flex items-center justify-between border-b border-slate-100 px-2.5 py-1.5 dark:border-slate-700/60">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">
+                  Parent Task Actions
+                </span>
+
+                <button
+                  type="button"
+                  onClick={() => setTaskMenuAnchor(null)}
+                  className="rounded-md p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-200"
+                >
+                  <PiX size={14} />
+                </button>
+              </div>
+
+              <div className="space-y-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const task = taskMenuAnchor.task;
+                    setTaskMenuAnchor(null);
+                    navigate(`/projects/${project.id}/tasks/${task.id}`);
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-blue-50 hover:text-blue-700 dark:text-slate-200 dark:hover:bg-blue-950/50 dark:hover:text-blue-300"
+                >
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-blue-100 text-blue-600 dark:bg-blue-950 dark:text-blue-400">
+                    <PiArrowSquareOut size={15} />
+                  </div>
+
+                  <div className="text-left">
+                    <p className="font-semibold">Open Task Details</p>
+                    <p className="text-[10px] font-normal text-slate-400 dark:text-slate-400">
+                      View deliverables &amp; description
+                    </p>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const task = taskMenuAnchor.task;
+                    setTaskMenuAnchor(null);
+                    navigate(
+                      `/projects/${project.id}/tasks/${task.id}/subtasks`
+                    );
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-indigo-50 hover:text-indigo-700 dark:text-slate-200 dark:hover:bg-indigo-950/50 dark:hover:text-indigo-300"
+                >
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-indigo-600 dark:bg-indigo-950 dark:text-indigo-400">
+                    <PiListChecks size={15} />
+                  </div>
+
+                  <div className="text-left">
+                    <p className="font-semibold">Manage Subtasks</p>
+                    <p className="text-[10px] font-normal text-slate-400 dark:text-slate-400">
+                      View &amp; decompose subtasks
+                    </p>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const task = taskMenuAnchor.task;
+                    setTaskMenuAnchor(null);
+                    openEditTask(task);
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-amber-50 hover:text-amber-700 dark:text-slate-200 dark:hover:bg-amber-950/50 dark:hover:text-amber-300"
+                >
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-600 dark:bg-amber-950 dark:text-amber-400">
+                    <PiPencilSimple size={15} />
+                  </div>
+
+                  <div className="text-left">
+                    <p className="font-semibold">Edit Parent Task</p>
+                    <p className="text-[10px] font-normal text-slate-400 dark:text-slate-400">
+                      Modify title &amp; details
+                    </p>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const task = taskMenuAnchor.task;
+                    setTaskMenuAnchor(null);
+                    setConfirmDeleteTask(task);
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-semibold text-rose-600 transition hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/40"
+                >
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-rose-100 text-rose-600 dark:bg-rose-950 dark:text-rose-400">
+                    <PiTrash size={15} />
+                  </div>
+
+                  <div className="text-left">
+                    <p className="font-semibold">Delete Parent Task</p>
+                    <p className="text-[10px] font-normal text-rose-400/80 dark:text-rose-400/80">
+                      Permanently remove
+                    </p>
+                  </div>
+                </button>
+              </div>
             </div>
+          </div>,
+          document.body
+        )}
 
-            <div className="space-y-1">
-              <button
-                type="button"
-                onClick={() => {
-                  const task = taskMenuAnchor.task;
-                  setTaskMenuAnchor(null);
-                  navigate(`/projects/${project.id}/tasks/${task.id}`);
-                }}
-                className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-blue-50 hover:text-blue-700 dark:text-slate-200 dark:hover:bg-blue-950/50 dark:hover:text-blue-300 transition"
-              >
-                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-100 text-blue-600 dark:bg-blue-950 dark:text-blue-400 shrink-0">
-                  <PiArrowSquareOut size={15} />
-                </div>
-                <div className="text-left">
-                  <p className="font-semibold">Open Task Details</p>
-                  <p className="text-[10px] text-slate-400 dark:text-slate-400 font-normal">View deliverables & description</p>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  const task = taskMenuAnchor.task;
-                  setTaskMenuAnchor(null);
-                  navigate(`/projects/${project.id}/tasks/${task.id}/subtasks`);
-                }}
-                className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 dark:text-slate-200 dark:hover:bg-indigo-950/50 dark:hover:text-indigo-300 transition"
-              >
-                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-100 text-indigo-600 dark:bg-indigo-950 dark:text-indigo-400 shrink-0">
-                  <PiListChecks size={15} />
-                </div>
-                <div className="text-left">
-                  <p className="font-semibold">Manage Subtasks</p>
-                  <p className="text-[10px] text-slate-400 dark:text-slate-400 font-normal">View & decompose subtasks</p>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  const task = taskMenuAnchor.task;
-                  setTaskMenuAnchor(null);
-                  openEditTask(task);
-                }}
-                className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-amber-50 hover:text-amber-700 dark:text-slate-200 dark:hover:bg-amber-950/50 dark:hover:text-amber-300 transition"
-              >
-                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-100 text-amber-600 dark:bg-amber-950 dark:text-amber-400 shrink-0">
-                  <PiPencilSimple size={15} />
-                </div>
-                <div className="text-left">
-                  <p className="font-semibold">Edit Parent Task</p>
-                  <p className="text-[10px] text-slate-400 dark:text-slate-400 font-normal">Modify title & details</p>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  const task = taskMenuAnchor.task;
-                  setTaskMenuAnchor(null);
-                  setConfirmDeleteTask(task);
-                }}
-                className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/40 transition"
-              >
-                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-rose-100 text-rose-600 dark:bg-rose-950 dark:text-rose-400 shrink-0">
-                  <PiTrash size={15} />
-                </div>
-                <div className="text-left">
-                  <p className="font-semibold">Delete Parent Task</p>
-                  <p className="text-[10px] text-rose-400/80 dark:text-rose-400/80 font-normal">Permanently remove</p>
-                </div>
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
-
-      {/* Connect GitHub Repository Modal */}
       {showConnectRepo && project && (
         <ConnectRepoModal
           isOpen={showConnectRepo}
