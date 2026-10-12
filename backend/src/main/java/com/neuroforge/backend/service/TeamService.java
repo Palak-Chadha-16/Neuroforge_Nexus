@@ -185,18 +185,19 @@ public class TeamService {
         return toDetail(teamRepository.save(team));
     }
 
-    /** DELETE /api/teams/{id} - clears project FK, removes members, then deletes the team. */
+    /** DELETE /api/teams/{id} - clears every project link, removes members, then deletes the team. */
     @Transactional
     public void delete(Long id) {
         Team team = find(id);
         assertCanManage(CurrentUser.get(), team);
 
-        // Clear the project's reference to this team so the FK doesn't block deletion
-        if (team.getProject() != null) {
-            Project project = team.getProject();
-            project.setTeam(null);
-            projectRepository.save(project);
-        }
+        // Clear every project that still points to this team, so the FK doesn't block deletion
+        projectRepository.findAll().stream()
+                .filter(p -> p.getTeam() != null && id.equals(p.getTeam().getId()))
+                .forEach(p -> {
+                    p.setTeam(null);
+                    projectRepository.save(p);
+                });
 
         teamMemberRepository.deleteByTeamId(id);
         teamRepository.delete(team);
