@@ -27,6 +27,13 @@ export const normalizeUser = (user) => {
       ? user.skills
       : null;
 
+  const isActive =
+    user.active !== undefined
+      ? Boolean(user.active)
+      : user.status
+        ? String(user.status).toLowerCase() !== "inactive"
+        : true;
+
   return {
     ...user,
     id: user.id != null ? Number(user.id) : Date.now(),
@@ -35,7 +42,9 @@ export const normalizeUser = (user) => {
     email: user.email || "",
     role: user.role || "unassigned",
     skills: backendSkills || defaultSkills,
-    status: user.status || "Active",
+    active: isActive,
+    status: user.status || (isActive ? "Active" : "Inactive"),
+    displayName: user.displayName || user.fullName || user.name || "User",
   };
 };
 

@@ -49,15 +49,19 @@ public final class UserDtos {
     }
 
     /**
-     * Lightweight entry for dropdowns (Admin/PM): no email, no phone.
+     * Entry for dropdowns (Admin/PM/PL/TL):
+     * includes role, email, and active/availability status for UI filters and labels.
      * displayName is ready to show, e.g. "Peter (Backend Developer)".
      */
     public record UserOption(
             Long id,
             String userCode,
             String fullName,
+            String email,
             String skill,
             String role,
+            boolean active,
+            String status,
             String displayName) {
 
         public static UserOption from(User user) {
@@ -66,8 +70,11 @@ public final class UserDtos {
                     user.getId(),
                     user.getUserCode(),
                     user.getFullName(),
+                    user.getEmail(),
                     skill,
                     user.getRole().name(),
+                    user.isActive(),
+                    user.getAvailabilityStatus(),
                     skill == null ? user.getFullName() : user.getFullName() + " (" + skill + ")");
         }
     }
