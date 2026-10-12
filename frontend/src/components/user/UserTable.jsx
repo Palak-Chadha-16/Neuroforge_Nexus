@@ -11,6 +11,7 @@ import Pagination from "./Pagination.jsx";
 import { formatRole, normalizeRole, ROLES } from "../../constants/roles.js";
 import { useProjectTeam } from "../../context/ProjectTeamContextStore.js";
 import { useProjects } from "../../context/ProjectContextStore.js";
+import { useTeams } from "../../context/TeamsContextStore.js";
 
 const UserTable = ({
   users,
@@ -24,8 +25,9 @@ const UserTable = ({
 }) => {
   const navigate = useNavigate();
 
-  const { projectTeams } = useProjectTeam() || {};
-  const { projects } = useProjects() || {};
+  const { projectTeams = {} } = useProjectTeam() || {};
+  const { projects = [] } = useProjects() || {};
+  const { teams = [] } = useTeams() || {};
 
   const [usersPerPage, setUsersPerPage] = useState(5);
   const showActions = Boolean(onEdit || onDelete);
@@ -37,7 +39,6 @@ const UserTable = ({
     startIndex + usersPerPage
   );
 
-  // Auto-clamp currentPage if filtered list changes
   useEffect(() => {
     if (currentPage > totalPages && totalPages > 0) {
       setCurrentPage(totalPages);
@@ -45,57 +46,148 @@ const UserTable = ({
   }, [currentPage, totalPages, setCurrentPage]);
 
   const getUserAssignments = (userId) => {
-    const list = [];
-    const seenProjectIds = new Set();
+    const assignmentsByProject = new Map();
+    const targetUserId = String(userId ?? "");
 
-    // 1. Check ProjectTeamContext members
-    if (projectTeams) {
-      for (const [projId, members] of Object.entries(projectTeams)) {
-        if (Array.isArray(members)) {
-          const memberRecord = members.find(
-            (m) => String(m.userId) === String(userId)
-          );
-          if (memberRecord) {
-            const proj = projects?.find((p) => String(p.id) === String(projId));
-            seenProjectIds.add(String(projId));
-            list.push({
-              projectId: projId,
-              projectName: proj?.name || `Project #${projId}`,
-              projectCode: proj?.code || null,
-              role: memberRecord.projectRole || "Member",
-            });
-          }
-        }
-      }
-    }
+    const assignProject = (projectId, assignment, priority) => {
+      if (projectId == null || !targetUserId) return;
 
-    // 2. Check if user is Project Lead or Project Manager on projects
-    if (Array.isArray(projects)) {
-      projects.forEach((p) => {
-        if (seenProjectIds.has(String(p.id))) return;
-        if (String(p.projectLeadId) === String(userId)) {
-          seenProjectIds.add(String(p.id));
-          list.push({
-            projectId: String(p.id),
-            projectName: p.name,
-            projectCode: p.code || null,
-            role: "Project Lead",
-          });
-        } else if (String(p.projectManagerId) === String(userId)) {
-          seenProjectIds.add(String(p.id));
-          list.push({
-            projectId: String(p.id),
-            projectName: p.name,
-            projectCode: p.code || null,
-            role: "Project Manager",
-          });
-        }
+      const key = String(projectId);
+      const current = assignmentsByProject.get(key);
+
+      if (current && current.priority > priority) return;
+
+      assignmentsByProject.set(key, {
+        ...assignment,
+        projectId: key,
+        priority,
       });
-    }
+    };
+
+    const projectList = Array.isArray(projects) ? projects : [];
+
+    // 1. Regular project-member assignments.
+    Object.entries(projectTeams || {}).forEach(([projectId, members]) => {
+      if (!Array.isArray(members)) return;
+
+      const member = members.find(
+        (item) =>
+          String(item?.userId ?? item?.user?.id ?? "") === targetUserId
+      );
+
+      if (!member) return;
+
+      const project = projectList.find(
+        (item) => String(item.id) === String(projectId)
+      );
+
+      assignProject(
+        projectId,
+        {
+          projectName: project?.name || `Project #${projectId}`,
+          projectCode: project?.code || null,
+          role:
+            member.projectRole ||
+            member.teamRole ||
+            member.role ||
+            "Member",
+        },
+        1
+      );
+    });
+
+    // 2. Team memberships. This also detects Team Leads.
+    (Array.isArray(teams) ? teams : []).forEach((team) => {
+      const members = Array.isArray(team?.members) ? team.members : [];
+
+      const member = members.find(
+        (item) =>
+          String(item?.userId ?? item?.user?.id ?? "") === targetUserId
+      );
+
+      if (!member) return;
+
+      const projectId = team.projectId ?? team.project?.id;
+      if (projectId == null) return;
+
+      const project = projectList.find(
+        (item) => String(item.id) === String(projectId)
+      );
+
+      assignProject(
+        projectId,
+        {
+          projectName:
+            team.projectName ||
+            team.project?.name ||
+            project?.name ||
+            `Project #${projectId}`,
+          projectCode:
+            team.projectCode ||
+            team.project?.code ||
+            project?.code ||
+            null,
+          role:
+            member.teamRole ||
+            member.projectRole ||
+            member.role ||
+            "Team Member",
+        },
+        2
+      );
+    });
+
+    // 3. Project Manager and Project Lead assignments.
+    // The backend may return these as nested objects instead of flat IDs.
+    projectList.forEach((project) => {
+      const projectId = project?.id;
+      if (projectId == null) return;
+
+      const managerId =
+        project.projectManagerId ??
+        project.projectManager?.id ??
+        project.projectManager?.userId;
+
+      const leadId =
+        project.projectLeadId ??
+        project.projectLead?.id ??
+        project.projectLead?.userId;
+
+      if (String(managerId ?? "") === targetUserId) {
+        assignProject(
+          projectId,
+          {
+            projectName: project.name || `Project #${projectId}`,
+            projectCode: project.code || null,
+            role: "Project Manager",
+          },
+          4
+        );
+      } else if (String(leadId ?? "") === targetUserId) {
+        assignProject(
+          projectId,
+          {
+            projectName: project.name || `Project #${projectId}`,
+            projectCode: project.code || null,
+            role: "Project Lead",
+          },
+          3
+        );
+      }
+    });
+
+    const assignments = [...assignmentsByProject.values()].map(
+      (assignment) => ({
+        projectId: assignment.projectId,
+        projectName: assignment.projectName,
+        projectCode: assignment.projectCode,
+        role: assignment.role,
+      })
+    );
 
     return {
-      isAssigned: list.length > 0,
-      assignments: list,
+      isAssigned: assignments.length > 0,
+      assignments,
     };
   };
 
@@ -172,9 +264,7 @@ const UserTable = ({
               <th className="px-6 py-4">Project Assignment</th>
 
               {showActions && (
-                <th className="px-6 py-4 text-right">
-                  Actions
-                </th>
+                <th className="px-6 py-4 text-right">Actions</th>
               )}
             </tr>
           </thead>
@@ -193,8 +283,7 @@ const UserTable = ({
                   ? user.skills
                   : [];
 
-                const currentStatus =
-                  user.status || "Active";
+                const currentStatus = user.status || "Active";
 
                 const canBeAssigned = [
                   ROLES.DEVELOPER,
@@ -212,15 +301,13 @@ const UserTable = ({
                       <button
                         type="button"
                         onClick={() =>
-                          navigate(
-                            `/user-management/${user.id}`
-                          )
+                          navigate(`/user-management/${user.id}`)
                         }
                         className="flex w-full items-center gap-3.5 text-left"
                         title={`View ${user.fullName}'s details`}
                       >
                         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#2563EB] to-[#4F46E5] font-bold text-white shadow-md shadow-blue-500/20">
-                          {user.fullName
+                          {(user.fullName || user.name || "U")
                             .charAt(0)
                             .toUpperCase()}
                         </div>
@@ -228,7 +315,7 @@ const UserTable = ({
                         <div>
                           <div className="flex items-center gap-2 font-semibold text-slate-900 dark:text-white">
                             <span className="transition hover:text-blue-600">
-                              {user.fullName}
+                              {user.fullName || user.name || "Unknown User"}
                             </span>
 
                             {isSelf && (
@@ -259,7 +346,7 @@ const UserTable = ({
                         />
 
                         <span className="font-mono text-xs">
-                          {user.email}
+                          {user.email || "—"}
                         </span>
                       </div>
                     </td>
@@ -297,29 +384,18 @@ const UserTable = ({
                         <div className="relative inline-block">
                           <select
                             value={currentStatus}
-                            onChange={(e) =>
+                            onChange={(event) =>
                               onUpdateStatus &&
-                              onUpdateStatus(
-                                user.id,
-                                e.target.value
-                              )
+                              onUpdateStatus(user.id, event.target.value)
                             }
                             className={`cursor-pointer rounded-full border bg-white px-3 py-1.5 text-xs font-semibold outline-none transition hover:border-blue-400 focus:border-blue-400 dark:bg-slate-800 ${getStatusBadgeStyle(
                               currentStatus
                             )}`}
                             title="Click to change your own status"
                           >
-                            <option value="Active">
-                              🟢 Active (You)
-                            </option>
-
-                            <option value="In Meeting">
-                              🟡 In Meeting (You)
-                            </option>
-
-                            <option value="Inactive">
-                              ⚪ Inactive (You)
-                            </option>
+                            <option value="Active">🟢 Active (You)</option>
+                            <option value="In Meeting">🟡 In Meeting (You)</option>
+                            <option value="Inactive">⚪ Inactive (You)</option>
                           </select>
                         </div>
                       ) : (
@@ -333,7 +409,6 @@ const UserTable = ({
                               currentStatus
                             )}`}
                           />
-
                           <span>{currentStatus}</span>
                         </div>
                       )}
@@ -341,27 +416,39 @@ const UserTable = ({
 
                     <td className="px-6 py-4">
                       {assignment.isAssigned ? (
-                        <div className="flex flex-col gap-1.5 items-start">
+                        <div className="flex flex-col items-start gap-1.5">
                           <div className="flex flex-wrap items-center gap-1.5">
-                            {assignment.assignments.slice(0, 1).map((p) => (
+                            {assignment.assignments.slice(0, 1).map((project) => (
                               <Link
-                                key={p.projectId}
-                                to={`/projects/${p.projectId}`}
-                                className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-xs font-semibold text-cyan-800 hover:bg-cyan-100 hover:text-cyan-950 dark:border-cyan-800/60 dark:bg-cyan-950/40 dark:text-cyan-300 dark:hover:bg-cyan-900/40 transition"
-                                title={`Navigate to ${p.projectName} (${p.role})`}
+                                key={project.projectId}
+                                to={`/projects/${project.projectId}`}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-xs font-semibold text-cyan-800 transition hover:bg-cyan-100 hover:text-cyan-950 dark:border-cyan-800/60 dark:bg-cyan-950/40 dark:text-cyan-300 dark:hover:bg-cyan-900/40"
+                                title={`Navigate to ${project.projectName} (${project.role})`}
                               >
-                                <PiFolder size={13} className="text-cyan-600 dark:text-cyan-400 shrink-0" />
-                                <span className="max-w-[140px] truncate">{p.projectName}</span>
-                                <span className="rounded bg-cyan-200/60 dark:bg-cyan-800/40 px-1 py-0.2 text-[10px] text-cyan-800 dark:text-cyan-200 font-medium">
-                                  {p.role}
+                                <PiFolder
+                                  size={13}
+                                  className="shrink-0 text-cyan-600 dark:text-cyan-400"
+                                />
+
+                                <span className="max-w-[140px] truncate">
+                                  {project.projectName}
+                                </span>
+
+                                <span className="rounded bg-cyan-200/60 px-1 py-0.5 text-[10px] font-medium text-cyan-800 dark:bg-cyan-800/40 dark:text-cyan-200">
+                                  {project.role}
                                 </span>
                               </Link>
                             ))}
 
                             {assignment.assignments.length > 1 && (
                               <span
-                                className="inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[11px] font-semibold text-blue-700 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300 cursor-default"
-                                title={assignment.assignments.map((a) => `${a.projectName} (${a.role})`).join("\n")}
+                                className="inline-flex cursor-default items-center rounded-md border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[11px] font-semibold text-blue-700 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300"
+                                title={assignment.assignments
+                                  .map(
+                                    (item) =>
+                                      `${item.projectName} (${item.role})`
+                                  )
+                                  .join("\n")}
                               >
                                 +{assignment.assignments.length - 1} more
                               </span>
@@ -371,8 +458,13 @@ const UserTable = ({
                           {onOpenAssignModal && canBeAssigned && (
                             <button
                               type="button"
-                              onClick={() => onOpenAssignModal(user, assignment.assignments)}
-                              className="text-[11px] font-medium text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1"
+                              onClick={() =>
+                                onOpenAssignModal(
+                                  user,
+                                  assignment.assignments
+                                )
+                              }
+                              className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-600 hover:underline dark:text-blue-400"
                             >
                               <PiUserPlus size={12} />
                               <span>Assign to another project</span>
@@ -380,9 +472,12 @@ const UserTable = ({
                           )}
                         </div>
                       ) : (
-                        <div className="flex flex-col gap-1.5 items-start">
+                        <div className="flex flex-col items-start gap-1.5">
                           <div className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-300">
-                            <PiBriefcase size={13} className="text-amber-500 dark:text-amber-400" />
+                            <PiBriefcase
+                              size={13}
+                              className="text-amber-500 dark:text-amber-400"
+                            />
                             <span>Unassigned</span>
                           </div>
 
@@ -390,7 +485,7 @@ const UserTable = ({
                             <button
                               type="button"
                               onClick={() => onOpenAssignModal(user, [])}
-                              className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-blue-600 hover:bg-blue-50 dark:border-blue-800 dark:bg-slate-800 dark:text-blue-400 dark:hover:bg-slate-700 transition"
+                              className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-blue-600 transition hover:bg-blue-50 dark:border-blue-800 dark:bg-slate-800 dark:text-blue-400 dark:hover:bg-slate-700"
                             >
                               <PiUserPlus size={12} />
                               <span>+ Assign to Project</span>
@@ -405,6 +500,7 @@ const UserTable = ({
                         <div className="flex justify-end gap-2">
                           {onEdit && (
                             <button
+                              type="button"
                               onClick={() => onEdit(user)}
                               title="Edit User"
                               className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:border-blue-500 dark:hover:text-blue-400"
@@ -415,6 +511,7 @@ const UserTable = ({
 
                           {onDelete && (
                             <button
+                              type="button"
                               onClick={() => onDelete(user)}
                               title="Delete User"
                               className="rounded-lg border border-rose-200 bg-rose-50 p-2 text-rose-500 transition hover:border-rose-300 hover:bg-rose-100 hover:text-rose-600 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-400 dark:hover:bg-rose-900/30"

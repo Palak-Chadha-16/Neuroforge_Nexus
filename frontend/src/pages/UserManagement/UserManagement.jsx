@@ -3,6 +3,7 @@ import { useAuth } from "../../context/AuthContextStore.js";
 import { useUsers } from "../../context/UsersContextStore.js";
 import { useProjectTeam } from "../../context/ProjectTeamContextStore.js";
 import { useProjects } from "../../context/ProjectContextStore.js";
+import { useTeams } from "../../context/TeamsContextStore.js";
 import UserSearch from "../../components/user/UserSearch.jsx";
 import EditUserForm from "../../components/user/EditUserForm.jsx";
 import DeleteUserModal from "../../components/user/DeleteUserModal.jsx";
@@ -10,7 +11,12 @@ import UserAddForm from "../../components/user/UserAddForm.jsx";
 import AssignUserModal from "../../components/user/AssignUserModal.jsx";
 import UserTable from "../../components/user/UserTable.jsx";
 import { ROLES, normalizeRole } from "../../constants/roles.js";
-import { PiPlus, PiUsers, PiUserCheck, PiBriefcase } from "react-icons/pi";
+import {
+  PiPlus,
+  PiUsers,
+  PiUserCheck,
+  PiBriefcase,
+} from "react-icons/pi";
 
 const FILTERABLE_ROLES = [
   "admin",
@@ -22,23 +28,32 @@ const FILTERABLE_ROLES = [
   "qa",
 ];
 
+const getProjectMemberId = (member) =>
+  member?.userId ?? member?.user?.id ?? "";
+
 const UserManagement = () => {
   const { currentUser } = useAuth();
+
   const {
-    users,
+    users = [],
     updateUser,
     updateUserStatus,
     deleteUser,
     createUser,
   } = useUsers();
-  const { projectTeams, addProjectMember } = useProjectTeam() || {};
+
+  const { projectTeams = {}, addProjectMember } =
+    useProjectTeam() || {};
+
   const { projects = [] } = useProjects() || {};
+  const { teams = [] } = useTeams() || {};
 
   const [editingUser, setEditingUser] = useState(null);
   const [deletingUser, setDeletingUser] = useState(null);
   const [showAddUser, setShowAddUser] = useState(false);
   const [assignModalUser, setAssignModalUser] = useState(null);
-  const [assignModalAssignments, setAssignModalAssignments] = useState([]);
+  const [assignModalAssignments, setAssignModalAssignments] =
+    useState([]);
   const [currentPage, setCurrentPage] = useState(1);
 
   const [searchTerm, setSearchTerm] = useState("");
@@ -50,50 +65,89 @@ const UserManagement = () => {
     setCurrentPage(1);
     setSearchTerm(value);
   };
+
   const updateRoleFilter = (value) => {
     setCurrentPage(1);
     setRoleFilter(value);
   };
+
   const updateStatusFilter = (value) => {
     setCurrentPage(1);
     setStatusFilter(value);
   };
+
   const updateAssignmentFilter = (value) => {
     setCurrentPage(1);
     setAssignmentFilter(value);
   };
 
-  const isUserAssigned = useCallback((userId) => {
-    // Check ProjectTeam assignments
-    if (projectTeams) {
-      const inTeam = Object.values(projectTeams).some(
+  const isUserAssigned = useCallback(
+    (userId) => {
+      const targetUserId = String(userId ?? "");
+
+      // Project-member assignments.
+      const isProjectMember = Object.values(projectTeams || {}).some(
         (members) =>
           Array.isArray(members) &&
-          members.some((m) => String(m.userId) === String(userId))
+          members.some(
+            (member) =>
+              String(getProjectMemberId(member)) === targetUserId
+          )
       );
-      if (inTeam) return true;
-    }
 
-    // Check project lead or manager assignments
-    if (Array.isArray(projects)) {
-      return projects.some(
-        (p) =>
-          String(p.projectLeadId) === String(userId) ||
-          String(p.projectManagerId) === String(userId)
+      if (isProjectMember) return true;
+
+      // Team membership, including Team Leads.
+      const isTeamMember = (Array.isArray(teams) ? teams : []).some(
+        (team) =>
+          Array.isArray(team?.members) &&
+          team.members.some(
+            (member) =>
+              String(getProjectMemberId(member)) === targetUserId
+          )
       );
-    }
 
-    return false;
-  }, [projectTeams, projects]);
+      if (isTeamMember) return true;
+
+      // Project Manager / Project Lead relationships.
+      return (Array.isArray(projects) ? projects : []).some(
+        (project) => {
+          const managerId =
+            project.projectManagerId ??
+            project.projectManager?.id ??
+            project.projectManager?.userId;
+
+          const leadId =
+            project.projectLeadId ??
+            project.projectLead?.id ??
+            project.projectLead?.userId;
+
+          return (
+            String(managerId ?? "") === targetUserId ||
+            String(leadId ?? "") === targetUserId
+          );
+        }
+      );
+    },
+    [projectTeams, projects, teams]
+  );
 
   const stats = useMemo(() => {
     const total = users.length;
-    const active = users.filter((u) => (u.status || "Active") === "Active").length;
-    const assigned = users.filter((u) => isUserAssigned(u.id)).length;
+
+    const active = users.filter(
+      (user) => (user.status || "Active") === "Active"
+    ).length;
+
+    const assigned = users.filter((user) =>
+      isUserAssigned(user.id)
+    ).length;
+
     return { total, active, assigned };
   }, [users, isUserAssigned]);
 
-  const isSuperAdmin = normalizeRole(currentUser?.role) === ROLES.ADMIN;
+  const isSuperAdmin =
+    normalizeRole(currentUser?.role) === ROLES.ADMIN;
 
   const filteredUsers = useMemo(() => {
     return users.filter((user) => {
@@ -106,7 +160,11 @@ const UserManagement = () => {
       if (searchTerm.trim()) {
         const term = searchTerm.toLowerCase();
 
-        const matchesName = (user.fullName || user.name || "")
+        const matchesName = (
+          user.fullName ||
+          user.name ||
+          ""
+        )
           .toLowerCase()
           .includes(term);
 
@@ -116,28 +174,36 @@ const UserManagement = () => {
 
         const matchesSkill =
           Array.isArray(user.skills) &&
-          user.skills.some((s) => s.toLowerCase().includes(term));
+          user.skills.some((skill) =>
+            String(skill).toLowerCase().includes(term)
+          );
 
         if (!matchesName && !matchesEmail && !matchesSkill) {
           return false;
         }
       }
 
-      if (roleFilter !== "All") {
-        if (normalizeRole(user.role) !== normalizeRole(roleFilter)) {
-          return false;
-        }
+      if (
+        roleFilter !== "All" &&
+        normalizeRole(user.role) !== normalizeRole(roleFilter)
+      ) {
+        return false;
       }
 
-      if (statusFilter !== "All") {
-        if (userStatus !== statusFilter) return false;
+      if (statusFilter !== "All" && userStatus !== statusFilter) {
+        return false;
       }
 
       if (assignmentFilter !== "All") {
         const assigned = isUserAssigned(user.id);
 
-        if (assignmentFilter === "Assigned" && !assigned) return false;
-        if (assignmentFilter === "Unassigned" && assigned) return false;
+        if (assignmentFilter === "Assigned" && !assigned) {
+          return false;
+        }
+
+        if (assignmentFilter === "Unassigned" && assigned) {
+          return false;
+        }
       }
 
       return true;
@@ -153,7 +219,11 @@ const UserManagement = () => {
   ]);
 
   if (!currentUser) {
-    return <div className="text-slate-500">Loading user...</div>;
+    return (
+      <div className="text-slate-500">
+        Loading user...
+      </div>
+    );
   }
 
   const handleCreateUser = async (newUser) => {
@@ -162,7 +232,7 @@ const UserManagement = () => {
     if (result.success) {
       setShowAddUser(false);
     } else {
-      alert(result.message || "Failed to create user.");
+      window.alert(result.message || "Failed to create user.");
     }
   };
 
@@ -172,7 +242,7 @@ const UserManagement = () => {
     const result = await updateUser(updated, currentUser?.id);
 
     if (!result.success) {
-      alert(result.message || "Failed to update user.");
+      window.alert(result.message || "Failed to update user.");
       return;
     }
 
@@ -182,24 +252,28 @@ const UserManagement = () => {
   const handleUpdateStatus = async (targetUserId, newStatus) => {
     if (!updateUserStatus) return;
 
-    const res = await updateUserStatus(
+    const result = await updateUserStatus(
       targetUserId,
       newStatus,
       currentUser?.id
     );
 
-    if (!res?.success) {
-      alert(res?.message || "Failed to update status.");
+    if (!result?.success) {
+      window.alert(
+        result?.message || "Failed to update status."
+      );
     }
   };
 
   const handleDelete = (user) => setDeletingUser(user);
 
   const handleConfirmDelete = async () => {
+    if (!deletingUser) return;
+
     const result = await deleteUser(deletingUser.id);
 
     if (!result.success) {
-      alert(result.message || "Failed to delete user.");
+      window.alert(result.message || "Failed to delete user.");
       return;
     }
 
@@ -214,8 +288,14 @@ const UserManagement = () => {
   };
 
   const handleAssignUser = async (projectId, userId, projectRole) => {
-        if (!addProjectMember) return { success: false, message: "Assignment service is not available." };
-    return await addProjectMember(projectId, userId, projectRole);
+    if (!addProjectMember) {
+      return {
+        success: false,
+        message: "Assignment service is not available.",
+      };
+    }
+
+    return addProjectMember(projectId, userId, projectRole);
   };
 
   return (
@@ -227,8 +307,8 @@ const UserManagement = () => {
           </h1>
 
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            Manage system users, skill profiles based on roles, active status,
-            and project allocations
+            Manage system users, skill profiles based on roles, active
+            status, and project allocations.
           </p>
         </div>
 

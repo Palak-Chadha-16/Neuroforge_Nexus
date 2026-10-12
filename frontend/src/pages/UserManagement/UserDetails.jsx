@@ -15,9 +15,16 @@ import axios, { getApiBase } from "../../services/api.js";
 import { useUsers } from "../../context/UsersContextStore.js";
 import { useProjects } from "../../context/ProjectContextStore.js";
 import { useProjectTeam } from "../../context/ProjectTeamContextStore.js";
+import { useTeams } from "../../context/TeamsContextStore.js";
 import { useTasks } from "../../context/TasksContextStore.js";
 
 const API_BASE = getApiBase();
+
+const getMemberUserId = (member) =>
+  member?.userId ?? member?.user?.id ?? "";
+
+const getProjectId = (team) =>
+  team?.projectId ?? team?.project?.id ?? "";
 
 const UserDetails = () => {
   const { userId } = useParams();
@@ -26,6 +33,7 @@ const UserDetails = () => {
   const { users = [] } = useUsers() || {};
   const { projects: allProjects = [] } = useProjects() || {};
   const { projectTeams = {} } = useProjectTeam() || {};
+  const { teams: allTeams = [] } = useTeams() || {};
   const { tasks = [] } = useTasks() || {};
 
   const [user, setUser] = useState(null);
@@ -33,73 +41,144 @@ const UserDetails = () => {
   const [error, setError] = useState("");
 
   useEffect(() => {
+    let cancelled = false;
+
     const fetchUserProfile = async () => {
       try {
         setLoading(true);
         setError("");
 
-                const response = await axios.get(
+        const response = await axios.get(
           `${API_BASE}/users/${userId}/profile`
         );
 
-        setUser(response.data);
+        if (!cancelled) {
+          setUser(response.data);
+        }
       } catch (err) {
-                const foundUser = users.find((u) => String(u.id) === String(userId));
-        if (foundUser) {
-          // Find projects this user belongs to
-          const userProjects = [];
-          if (Array.isArray(allProjects)) {
-            allProjects.forEach((p) => {
-              const members = projectTeams?.[String(p.id)] || [];
-              const isMember = members.some((m) => String(m.userId) === String(userId));
-              const isLead = String(p.projectLeadId) === String(userId);
-              const isPM = String(p.projectManagerId) === String(userId);
+        if (cancelled) return;
 
-              if (isMember || isLead || isPM) {
+        const foundUser = users.find(
+          (item) => String(item.id) === String(userId)
+        );
+
+        if (foundUser) {
+          const userProjects = [];
+
+          const userTeamMemberships = (
+            Array.isArray(allTeams) ? allTeams : []
+          )
+            .map((team) => {
+              const member = (
+                Array.isArray(team?.members) ? team.members : []
+              ).find(
+                (item) =>
+                  String(getMemberUserId(item)) === String(userId)
+              );
+
+              return member ? { team, member } : null;
+            })
+            .filter(Boolean);
+
+          if (Array.isArray(allProjects)) {
+            allProjects.forEach((project) => {
+              const projectMembers =
+                projectTeams?.[String(project.id)] || [];
+
+              const memberRecord = projectMembers.find(
+                (member) =>
+                  String(getMemberUserId(member)) === String(userId)
+              );
+
+              const managerId =
+                project.projectManagerId ??
+                project.projectManager?.id ??
+                project.projectManager?.userId;
+
+              const leadId =
+                project.projectLeadId ??
+                project.projectLead?.id ??
+                project.projectLead?.userId;
+
+              const isManager =
+                String(managerId ?? "") === String(userId);
+
+              const isProjectLead =
+                String(leadId ?? "") === String(userId);
+
+              const teamRecord = userTeamMemberships.find(
+                ({ team }) =>
+                  String(getProjectId(team)) === String(project.id)
+              );
+
+              const isProjectMember = Boolean(memberRecord);
+              const isTeamMember = Boolean(teamRecord);
+
+              if (
+                isProjectMember ||
+                isManager ||
+                isProjectLead ||
+                isTeamMember
+              ) {
+                const assignmentRole = isManager
+                  ? "Project Manager"
+                  : isProjectLead
+                    ? "Project Lead"
+                    : teamRecord?.member?.teamRole ||
+                      memberRecord?.projectRole ||
+                      memberRecord?.teamRole ||
+                      memberRecord?.role ||
+                      "Member";
+
                 userProjects.push({
-                  id: p.id,
-                  name: p.name,
-                  code: p.code,
-                  status: p.status || "In Progress",
-                  startDate: p.startDate,
-                  endDate: p.endDate,
-                  priority: p.priority || "High",
+                  id: project.id,
+                  name: project.name,
+                  code: project.code,
+                  status: project.status || "In Progress",
+                  startDate: project.startDate,
+                  endDate: project.endDate,
+                  priority: project.priority || "High",
+                  assignmentRole,
                 });
               }
             });
           }
 
-          // Find tasks assigned to this user
           const userTasks = (tasks || []).filter(
-            (t) => String(t.assigneeId ?? t.assignee?.id) === String(userId)
+            (task) =>
+              String(task.assigneeId ?? task.assignee?.id ?? "") ===
+              String(userId)
           );
 
           setUser({
             ...foundUser,
-            userCode: foundUser.userCode || `USR-${String(foundUser.id).padStart(4, "0")}`,
+            userCode:
+              foundUser.userCode ||
+              `USR-${String(foundUser.id).padStart(4, "0")}`,
             roleLabel: foundUser.role,
-            skill: Array.isArray(foundUser.skills) ? foundUser.skills.join(", ") : foundUser.skills || "Full Stack",
-            department: foundUser.department || "Engineering",
-            phone: foundUser.phone || "+91 98765 43210",
-            emergencyContact: foundUser.emergencyContact || "+91 98765 01234",
-            address: foundUser.address || "Infosys Development Center, Electronics City, Bengaluru",
-            joiningDate: foundUser.joiningDate || "2024-01-15",
+            skill: Array.isArray(foundUser.skills)
+              ? foundUser.skills.join(", ")
+              : foundUser.skills || "Full Stack",
             projects: userProjects,
-            teams: [
-              {
-                id: 1,
-                name: "Core Platform Alpha",
-                teamCode: "TEAM-ALPHA",
-                teamRole: foundUser.role,
-              },
-            ],
-            assignedTasks: userTasks.map((t) => ({
-              id: t.id,
-              taskName: t.title || t.name,
-              taskCode: t.code || `TSK-${t.id}`,
-              priority: t.priority || "Medium",
-              status: t.status || "In Progress",
-              dueDate: t.dueDate,
+            teams: userTeamMemberships.map(({ team, member }) => ({
+              id: team.id,
+              name: team.name,
+              teamCode: team.teamCode || team.code || null,
+              teamRole: member.teamRole || member.role || null,
+              projectId: getProjectId(team) || null,
+              projectName:
+                team.projectName || team.project?.name || null,
+              projectCode:
+                team.projectCode || team.project?.code || null,
+            })),
+            assignedTasks: userTasks.map((task) => ({
+              id: task.id,
+              title: task.title || task.name,
+              taskKey: task.code || `TSK-${task.id}`,
+              priority: task.priority || "Medium",
+              status: task.status || "In Progress",
+              dueDate: task.dueDate,
+              projectName: task.projectName || "",
             })),
           });
         } else {
@@ -109,12 +188,25 @@ const UserDetails = () => {
           );
         }
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     };
 
     fetchUserProfile();
-  }, [userId, allProjects, projectTeams, tasks, users]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    userId,
+    allProjects,
+    projectTeams,
+    allTeams,
+    tasks,
+    users,
+  ]);
 
   const formatDate = (value) => {
     if (!value) return "—";
@@ -243,7 +335,6 @@ const UserDetails = () => {
 
   return (
     <div className="space-y-6">
-      {/* HEADER */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <button
@@ -265,7 +356,6 @@ const UserDetails = () => {
         </div>
       </div>
 
-      {/* PROFILE HEADER */}
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-4">
@@ -340,7 +430,6 @@ const UserDetails = () => {
         </div>
       </section>
 
-      {/* BASIC INFORMATION */}
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <div className="mb-5 flex items-center gap-2">
           <PiIdentificationCard size={20} className="text-blue-600 dark:text-blue-400" />
@@ -355,7 +444,6 @@ const UserDetails = () => {
             <p className="text-xs font-medium text-slate-400 dark:text-slate-500">
               User ID
             </p>
-
             <p className="mt-1 font-semibold text-slate-800 dark:text-slate-200">
               {user.id ?? "—"}
             </p>
@@ -365,7 +453,6 @@ const UserDetails = () => {
             <p className="text-xs font-medium text-slate-400 dark:text-slate-500">
               User Code
             </p>
-
             <p className="mt-1 font-semibold text-slate-800 dark:text-slate-200">
               {user.userCode || "—"}
             </p>
@@ -376,7 +463,6 @@ const UserDetails = () => {
               <PiEnvelopeSimple size={15} />
               Email
             </div>
-
             <p className="mt-1 break-all font-medium text-slate-800 dark:text-slate-200">
               {user.email || "—"}
             </p>
@@ -387,7 +473,6 @@ const UserDetails = () => {
               <PiPhone size={15} />
               Contact Number
             </div>
-
             <p className="mt-1 font-medium text-slate-800 dark:text-slate-200">
               {user.contactNumber || "—"}
             </p>
@@ -397,7 +482,6 @@ const UserDetails = () => {
             <p className="text-xs font-medium text-slate-400 dark:text-slate-500">
               Role
             </p>
-
             <p className="mt-1 font-semibold text-slate-800 dark:text-slate-200">
               {user.roleLabel || user.role || "—"}
             </p>
@@ -408,7 +492,6 @@ const UserDetails = () => {
               <PiCalendarBlank size={15} />
               Joined
             </div>
-
             <p className="mt-1 font-medium text-slate-800 dark:text-slate-200">
               {formatDate(user.createdAt)}
             </p>
@@ -416,11 +499,9 @@ const UserDetails = () => {
         </div>
       </section>
 
-      {/* PROJECTS */}
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <div className="mb-5 flex items-center gap-2">
           <PiBriefcase size={20} className="text-blue-600 dark:text-blue-400" />
-
           <h2 className="text-base font-bold text-slate-900 dark:text-white">
             Assigned Projects
           </h2>
@@ -447,6 +528,12 @@ const UserDetails = () => {
                       <p className="mt-1 text-xs font-medium text-slate-400 dark:text-slate-400">
                         {project.code}
                       </p>
+                    )}
+
+                    {project.assignmentRole && (
+                      <span className="mt-2 inline-flex rounded-md border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-[11px] font-semibold text-cyan-800 dark:border-cyan-800/60 dark:bg-cyan-950/40 dark:text-cyan-300">
+                        {project.assignmentRole}
+                      </span>
                     )}
                   </div>
 
@@ -484,11 +571,9 @@ const UserDetails = () => {
         )}
       </section>
 
-      {/* TEAMS */}
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <div className="mb-5 flex items-center gap-2">
           <PiUsersThree size={20} className="text-indigo-600 dark:text-indigo-400" />
-
           <h2 className="text-base font-bold text-slate-900 dark:text-white">
             Team Membership
           </h2>
@@ -539,11 +624,9 @@ const UserDetails = () => {
         )}
       </section>
 
-      {/* TASKS */}
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <div className="mb-5 flex items-center gap-2">
           <PiCheckCircle size={20} className="text-emerald-600 dark:text-emerald-400" />
-
           <h2 className="text-base font-bold text-slate-900 dark:text-white">
             Assigned Tasks
           </h2>
