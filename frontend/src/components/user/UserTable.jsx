@@ -8,7 +8,7 @@ import {
   PiUserPlus,
 } from "react-icons/pi";
 import Pagination from "./Pagination.jsx";
-import { formatRole } from "../../constants/roles.js";
+import { formatRole, normalizeRole, ROLES } from "../../constants/roles.js";
 import { useProjectTeam } from "../../context/ProjectTeamContext.jsx";
 import { useProjects } from "../../context/ProjectContext.jsx";
 
@@ -196,6 +196,13 @@ const UserTable = ({
                 const currentStatus =
                   user.status || "Active";
 
+                const canBeAssigned = [
+                  ROLES.DEVELOPER,
+                  ROLES.TESTER,
+                  ROLES.QA,
+                  ROLES.TEAM_LEAD,
+                ].includes(normalizeRole(user.role));
+
                 return (
                   <tr
                     key={user.id}
@@ -361,7 +368,7 @@ const UserTable = ({
                             )}
                           </div>
 
-                          {onOpenAssignModal && (
+                          {onOpenAssignModal && canBeAssigned && (
                             <button
                               type="button"
                               onClick={() => onOpenAssignModal(user, assignment.assignments)}
@@ -379,7 +386,7 @@ const UserTable = ({
                             <span>Unassigned</span>
                           </div>
 
-                          {onOpenAssignModal && (
+                          {onOpenAssignModal && canBeAssigned && (
                             <button
                               type="button"
                               onClick={() => onOpenAssignModal(user, [])}

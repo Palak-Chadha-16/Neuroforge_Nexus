@@ -15,15 +15,21 @@ public final class ProjectDtos {
             Long id, String name, String code, String projectKey,
             LocalDate startDate, LocalDate endDate, String status, String priority,
             PersonInfo projectManager, PersonInfo projectLead, Long teamId, String teamName,
+            int teamMemberCount,
             List<PersonInfo> members, String repository) {
-        public static Summary from(Project project) {
+        public static Summary from(Project project, int teamMemberCount) {
             List<PersonInfo> members = project.getMembers().stream().map(PersonInfo::from).toList();
             return new Summary(project.getId(), project.getName(), project.getCode(), project.getProjectKey(),
                     project.getStartDate(), project.getEndDate(), project.getStatus(), project.getPriority(),
                     PersonInfo.from(project.getProjectManager()), PersonInfo.from(project.getProjectLead()),
                     project.getTeam() == null ? null : project.getTeam().getId(),
                     project.getTeam() == null ? null : project.getTeam().getName(),
+                    teamMemberCount,
                     members, repositoryUrl(project));
+        }
+        /** Overload kept for callers that don’t have a member count (defaults to 0). */
+        public static Summary from(Project project) {
+            return from(project, 0);
         }
     }
 

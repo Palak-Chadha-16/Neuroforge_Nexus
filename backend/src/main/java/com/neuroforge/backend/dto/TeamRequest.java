@@ -10,6 +10,7 @@ public class TeamRequest {
     private String teamCode;
     private String description;
     private List<Long> memberIds;
+    private Long teamLeadId;
 
     public Long getProjectId() { return projectId; }
     public void setProjectId(Long projectId) { this.projectId = projectId; }
@@ -21,4 +22,6 @@ public class TeamRequest {
     public void setDescription(String description) { this.description = description; }
     public List<Long> getMemberIds() { return memberIds; }
     public void setMemberIds(List<Long> memberIds) { this.memberIds = memberIds; }
+    public Long getTeamLeadId() { return teamLeadId; }
+    public void setTeamLeadId(Long teamLeadId) { this.teamLeadId = teamLeadId; }
 }

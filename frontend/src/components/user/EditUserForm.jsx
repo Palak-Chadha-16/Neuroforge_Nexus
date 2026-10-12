@@ -10,7 +10,7 @@ import {
   ROLE_DEFAULT_SKILLS,
   normalizeUserRole,
 } from "../../context/UsersContext.jsx";
-import { formatRole } from "../../constants/roles.js";
+import { ROLES, normalizeRole, formatRole } from "../../constants/roles.js";
 
 const AVAILABLE_ROLES = [
   "admin",
@@ -29,7 +29,7 @@ const EditUserForm = ({ user, currentUserId, onCancel, onSave }) => {
 
   const [fullName, setFullName] = useState(user.fullName || "");
   const [email, setEmail] = useState(user.email || "");
-  const [role, setRole] = useState(user.role || "developer");
+  const [role, setRole] = useState(normalizeRole(user.role));
   const [status, setStatus] = useState(user.status || "Active");
   const [skills, setSkills] = useState(
     Array.isArray(user.skills) ? [...user.skills] : []
@@ -157,6 +157,11 @@ const EditUserForm = ({ user, currentUserId, onCancel, onSave }) => {
               onChange={(e) => handleRoleChange(e.target.value)}
               className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-800 outline-none transition focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/15 dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:focus:border-blue-400"
             >
+              {role === ROLES.UNASSIGNED && (
+                <option value={ROLES.UNASSIGNED} disabled className="dark:bg-slate-800 dark:text-slate-400">
+                  — Pending Assignment —
+                </option>
+              )}
               {AVAILABLE_ROLES.map((r) => (
                 <option key={r} value={r} className="dark:bg-slate-800 dark:text-white">
                   {formatRole(r)}

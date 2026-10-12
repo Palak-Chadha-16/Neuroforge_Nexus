@@ -1,372 +1,181 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { IoAddSharp } from "react-icons/io5";
+import {
+  PiPencilSimple, PiTrash, PiDotsThreeVertical,
+  PiUsers, PiMagnifyingGlass, PiFunnel,
+} from "react-icons/pi";
 import { useTeams } from "../../context/TeamsContext.jsx";
 import { useUsers } from "../../context/UsersContext.jsx";
+import { useProjects } from "../../context/ProjectContext.jsx";
+import { normalizeRole, ROLES } from "../../constants/roles.js";
 import TeamTable from "../../components/team/TeamTable.jsx";
 import EditMemberForm from "../../components/team/EditMemberForm.jsx";
 
-const TEAM_ROLES = ["Manager", "Member"];
+// Backend MemberInfo has fullName/email at top level; TeamTable expects member.user.*
+const adaptMembers = (members) =>
+  (members || []).map((m) => ({
+    ...m,
+    user: { id: m.userId, fullName: m.fullName, email: m.email },
+  }));
 
-const TeamManagement = () => {
-  const {
-    teams,
-    createTeam,
-    updateTeam,
-    deleteTeam,
-    addMember,
-    updateMember,
-    removeMember,
-  } = useTeams();
+const emptyForm = () => ({ projectId: "", name: "", teamLeadId: "", memberIds: [] });
 
-  const { users } = useUsers();
+// ── TeamForm (Create / Edit) ──────────────────────────────────────────────────
+const TeamForm = ({
+  projects,
+  projectsWithoutTeam,
+  teamLeadOptions,
+  memberOptions,
+  initial,
+  isEdit,
+  onSave,
+  onCancel,
+}) => {
+  const [form, setForm] = useState(initial || emptyForm());
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
 
-  const [newTeamName, setNewTeamName] = useState("");
-  const [activeTeamId, setActiveTeamId] = useState(null);
-  const [editingMember, setEditingMember] = useState(null);
-  const [showAddMember, setShowAddMember] = useState(false);
-  const [selectedUserId, setSelectedUserId] = useState("");
-  const [teamRole, setTeamRole] = useState("Member");
+  // When editing, the project is fixed; when creating, derive it from form.projectId
+  const selectedProject = projects.find((p) => String(p.id) === String(form.projectId));
 
-  const [editingTeamId, setEditingTeamId] = useState(null);
-  const [editingTeamName, setEditingTeamName] = useState("");
+  const toggle = (id) =>
+    setForm((f) => ({
+      ...f,
+      memberIds: f.memberIds.includes(id)
+        ? f.memberIds.filter((x) => x !== id)
+        : [...f.memberIds, id],
+    }));
 
-  useEffect(() => {
-    if (!activeTeamId && teams.length > 0) {
-      setActiveTeamId(teams[0].id);
-    }
-  }, [teams, activeTeamId]);
-
-  const activeTeam = teams.find(
-    (team) => String(team.id) === String(activeTeamId)
-  );
-
-  const handleCreateTeam = async (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-
-    if (!newTeamName.trim()) return;
-
-    const result = await createTeam(newTeamName.trim());
-
-    if (!result.success) {
-      alert(result.message);
-      return;
-    }
-
-    setNewTeamName("");
+    if (!form.projectId) { setError("Project is required."); return; }
+    if (!form.name.trim()) { setError("Team name is required."); return; }
+    setSaving(true);
+    setError("");
+    const result = await onSave(form);
+    setSaving(false);
+    if (!result.success) setError(result.message || "Failed to save team.");
   };
 
-  const handleEditTeam = () => {
-    if (!activeTeam) return;
-
-    setEditingTeamId(activeTeam.id);
-    setEditingTeamName(activeTeam.name);
-  };
-
-  const handleSaveTeam = async () => {
-    if (!editingTeamName.trim()) return;
-
-    const result = await updateTeam(editingTeamId, {
-      name: editingTeamName.trim(),
-    });
-
-    if (!result.success) {
-      alert(result.message);
-      return;
-    }
-
-    setEditingTeamId(null);
-    setEditingTeamName("");
-  };
-
-  const handleCancelEditTeam = () => {
-    setEditingTeamId(null);
-    setEditingTeamName("");
-  };
-
-  const handleDeleteTeam = async () => {
-    if (!activeTeam) return;
-
-    const confirmed = window.confirm(
-      `Are you sure you want to delete "${activeTeam.name}"?`
-    );
-
-    if (!confirmed) return;
-
-    const deletedTeamId = activeTeam.id;
-
-    const result = await deleteTeam(deletedTeamId);
-
-    if (!result.success) {
-      alert(result.message);
-      return;
-    }
-
-    const remainingTeams = teams.filter(
-      (team) => String(team.id) !== String(deletedTeamId)
-    );
-
-    setActiveTeamId(
-      remainingTeams.length > 0 ? remainingTeams[0].id : null
-    );
-    setEditingMember(null);
-    setShowAddMember(false);
-    setEditingTeamId(null);
-    setEditingTeamName("");
-  };
-
-  const handleAddMember = async (e) => {
-    e.preventDefault();
-
-    const user = users.find(
-      (u) => String(u.id) === String(selectedUserId)
-    );
-
-    if (!user || !activeTeam) return;
-
-    const alreadyMember = (activeTeam.members || []).some(
-      (member) => String(member.user?.id) === String(user.id)
-    );
-
-    if (alreadyMember) {
-      alert(`${user.fullName} is already a member of this team.`);
-      return;
-    }
-
-    const result = await addMember(activeTeam.id, {
-      userId: user.id,
-      teamRole,
-    });
-
-    if (!result.success) {
-      alert(result.message);
-      return;
-    }
-
-    setSelectedUserId("");
-    setTeamRole("Member");
-    setShowAddMember(false);
-  };
-
-  const handleEditMember = (member) => {
-    setEditingMember(member);
-  };
-
-  const handleSaveMember = async (updated) => {
-    if (!activeTeam) return;
-
-    const result = await updateMember(
-      activeTeam.id,
-      updated.user.id,
-      updated
-    );
-
-    if (!result.success) {
-      alert(result.message);
-      return;
-    }
-
-    setEditingMember(null);
-  };
-
-  const handleRemoveMember = async (member) => {
-    if (!activeTeam) return;
-
-    const confirmed = window.confirm(
-      "Are you sure you want to remove this member from the team?"
-    );
-
-    if (!confirmed) return;
-
-    const result = await removeMember(activeTeam.id, member.user.id);
-
-    if (!result.success) {
-      alert(result.message);
-    }
-  };
+  const allProjectsHaveTeam = !isEdit && projectsWithoutTeam.length === 0;
 
   return (
-    <>
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-[#0f172a]">
+      <div className="mb-6 flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-semibold text-[#172033]">
-            Teams
+          <h2 className="text-lg font-semibold text-[#172033] dark:text-white">
+            {isEdit ? "Edit Team" : "Create New Team"}
           </h2>
-
-          <p className="mt-1 text-sm text-[#64748B]">
-            Manage teams and members
+          <p className="mt-1 text-xs text-[#64748B] dark:text-slate-400">
+            Configure team name, lead and members.
           </p>
         </div>
-
-        <form onSubmit={handleCreateTeam} className="flex gap-2">
-          <input
-            type="text"
-            placeholder="New team name"
-            value={newTeamName}
-            onChange={(e) => setNewTeamName(e.target.value)}
-            className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-[#172033] placeholder:text-slate-400 outline-none transition focus:border-[#2563EB] focus:ring-2 focus:ring-blue-500/15"
-          />
-
-          <button
-            type="submit"
-            className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#2563EB] to-[#4F46E5] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:brightness-110"
-          >
-            <IoAddSharp size={18} />
-            Create
-          </button>
-        </form>
+        <button type="button" onClick={onCancel}
+          className="rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-[#172033] dark:hover:bg-slate-800 dark:hover:text-white">
+          ✕
+        </button>
       </div>
 
-      {teams.length > 0 && (
-        <div className="mt-6 flex gap-2 overflow-x-auto border-b border-slate-300 pb-3">
-          {teams.map((team) => (
-            <button
-              key={team.id}
-              onClick={() => setActiveTeamId(team.id)}
-              className={`rounded-xl px-3.5 py-2 text-sm transition ${
-                String(team.id) === String(activeTeamId)
-                  ? "bg-gradient-to-r from-[#2563EB] to-[#4F46E5] font-semibold text-white shadow-sm"
-                  : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white"
-              }`}
-            >
-              {team.name}
-            </button>
-          ))}
+      {allProjectsHaveTeam && (
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-400">
+          All projects already have a team. Delete an existing team first.
         </div>
       )}
 
-      {teams.length === 0 && (
-        <div className="mt-6 rounded-2xl border border-slate-300 bg-white p-10 text-center shadow-sm">
-          <p className="text-sm text-[#64748B]">
-            No teams created yet.
-          </p>
+      {error && (
+        <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-400">
+          {error}
         </div>
       )}
 
-      {activeTeam && (
-        <div className="mt-6 rounded-2xl border border-slate-300 bg-white p-5 shadow-sm">
-          <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              {editingTeamId ? (
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={editingTeamName}
-                    onChange={(e) => setEditingTeamName(e.target.value)}
-                    className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-[#172033] outline-none transition focus:border-[#2563EB] focus:ring-2 focus:ring-blue-500/15"
-                  />
-
-                  <button
-                    onClick={handleSaveTeam}
-                    className="rounded-xl bg-[#2563EB] px-3 py-2 text-xs font-semibold text-white transition hover:bg-blue-700"
-                  >
-                    Save
-                  </button>
-
-                  <button
-                    onClick={handleCancelEditTeam}
-                    className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-[#172033]"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              ) : (
-                <>
-                  <h3 className="text-lg font-semibold text-[#172033]">
-                    Team - {activeTeam.name}
-                  </h3>
-
-                  <p className="mt-1 text-xs text-[#64748B]">
-                    {(activeTeam.members || []).length} member(s)
-                  </p>
-                </>
-              )}
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              {!editingTeamId && (
-                <button
-                  onClick={handleEditTeam}
-                  className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-[#172033]"
-                >
-                  Edit Team
-                </button>
-              )}
-
-              <button
-                onClick={handleDeleteTeam}
-                className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100"
-              >
-                Delete Team
-              </button>
-
-              <button
-                onClick={() => setShowAddMember((value) => !value)}
-                className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#2563EB] to-[#4F46E5] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:brightness-110"
-              >
-                <IoAddSharp size={18} />
-                Add Member
-              </button>
-            </div>
+      <form onSubmit={handleSubmit}>
+        {/* Row 1: Project + Team Name */}
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+          <div>
+            <label className="mb-2 block text-xs font-semibold text-[#475569] dark:text-slate-300">
+              Project *
+            </label>
+            {isEdit ? (
+              <input type="text" value={selectedProject?.name || ""} readOnly
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-500 outline-none cursor-not-allowed dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400" />
+            ) : (
+              <select value={form.projectId}
+                onChange={(e) => setForm((f) => ({ ...f, projectId: e.target.value }))}
+                disabled={allProjectsHaveTeam}
+                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-[#172033] outline-none transition focus:border-[#2563EB] focus:ring-2 focus:ring-blue-500/15 dark:border-slate-700 dark:bg-[#1e293b] dark:text-white disabled:opacity-50">
+                <option value="">— Select a project —</option>
+                {projectsWithoutTeam.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}{p.code ? ` (${p.code})` : ""}</option>
+                ))}
+              </select>
+            )}
           </div>
-
-          {showAddMember && (
-            <form
-              onSubmit={handleAddMember}
-              className="mb-5 flex flex-wrap gap-2 rounded-xl border border-slate-300 bg-[#F1F5F9] p-4"
-            >
-              <select
-                value={selectedUserId}
-                onChange={(e) => setSelectedUserId(e.target.value)}
-                required
-                className="flex-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-[#172033] outline-none transition focus:border-[#2563EB] focus:ring-2 focus:ring-blue-500/15"
-              >
-                <option value="">Select user</option>
-
-                {users.map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {user.fullName} ({user.email})
-                  </option>
-                ))}
-              </select>
-
-              <select
-                value={teamRole}
-                onChange={(e) => setTeamRole(e.target.value)}
-                className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-[#172033] outline-none transition focus:border-[#2563EB] focus:ring-2 focus:ring-blue-500/15"
-              >
-                {TEAM_ROLES.map((role) => (
-                  <option key={role} value={role}>
-                    {role}
-                  </option>
-                ))}
-              </select>
-
-              <button
-                type="submit"
-                className="rounded-xl bg-gradient-to-r from-[#2563EB] to-[#4F46E5] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:brightness-110"
-              >
-                Add
-              </button>
-            </form>
-          )}
-
-          <TeamTable
-            members={activeTeam.members || []}
-            onEdit={handleEditMember}
-            onRemove={handleRemoveMember}
-          />
+          <div>
+            <label className="mb-2 block text-xs font-semibold text-[#475569] dark:text-slate-300">
+              Team Name *
+            </label>
+            <input type="text" value={form.name}
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              placeholder="e.g. Alpha Squad"
+              className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-[#172033] placeholder:text-slate-400 outline-none transition focus:border-[#2563EB] focus:ring-2 focus:ring-blue-500/15 dark:border-slate-700 dark:bg-[#1e293b] dark:text-white" />
+          </div>
         </div>
-      )}
 
-      {editingMember && activeTeam && (
-        <EditMemberForm
-          member={editingMember}
-          onCancel={() => setEditingMember(null)}
-          onSave={handleSaveMember}
-        />
-      )}
-    </>
+        {/* Team ID (edit only, read-only) */}
+        {isEdit && initial?.teamCode && (
+          <div className="mt-5">
+            <label className="mb-2 block text-xs font-semibold text-[#475569] dark:text-slate-300">Team ID</label>
+            <input type="text" value={initial.teamCode} readOnly
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-500 outline-none cursor-not-allowed dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400" />
+          </div>
+        )}
+
+        {/* Team Lead */}
+        <div className="mt-5">
+          <label className="mb-2 block text-xs font-semibold text-[#475569] dark:text-slate-300">Team Lead</label>
+          <select value={form.teamLeadId}
+            onChange={(e) => setForm((f) => ({ ...f, teamLeadId: e.target.value }))}
+            className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-[#172033] outline-none transition focus:border-[#2563EB] focus:ring-2 focus:ring-blue-500/15 dark:border-slate-700 dark:bg-[#1e293b] dark:text-white">
+            <option value="">— Select Team Lead —</option>
+            {teamLeadOptions.map((u) => (
+              <option key={u.id} value={u.id}>{u.fullName}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* Members */}
+        <div className="mt-5">
+          <label className="mb-2 block text-xs font-semibold text-[#475569] dark:text-slate-300">
+            Members <span className="font-normal text-slate-400">(Developer / Tester / QA)</span>
+          </label>
+          <div className="max-h-48 overflow-y-auto rounded-xl border border-slate-300 bg-white p-3 dark:border-slate-700 dark:bg-[#1e293b]">
+            {memberOptions.length === 0 ? (
+              <p className="text-xs text-slate-400">No eligible users found.</p>
+            ) : (
+              memberOptions.map((u) => (
+                <label key={u.id} className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm hover:bg-slate-50 dark:hover:bg-slate-800">
+                  <input type="checkbox" checked={form.memberIds.includes(u.id)}
+                    onChange={() => toggle(u.id)}
+                    className="h-4 w-4 rounded border-slate-300 accent-[#2563EB]" />
+                  <span className="text-[#172033] dark:text-slate-200">{u.fullName}</span>
+                  {u.skill && <span className="text-xs text-slate-400">({u.skill})</span>}
+                </label>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="mt-6 flex justify-end gap-3">
+          <button type="button" onClick={onCancel}
+            className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-[#172033] dark:border-slate-700 dark:bg-[#1e293b] dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white">
+            Cancel
+          </button>
+          <button type="submit" disabled={saving || allProjectsHaveTeam}
+            className="rounded-xl bg-gradient-to-r from-[#2563EB] to-[#4F46E5] px-5 py-2 text-xs font-semibold text-white shadow-lg shadow-blue-500/20 transition hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed">
+            {saving ? "Saving..." : isEdit ? "Update Team" : "Save Team"}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 };
-
-export default TeamManagement;

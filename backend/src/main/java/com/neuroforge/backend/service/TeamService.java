@@ -3,6 +3,7 @@ package com.neuroforge.backend.service;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -66,6 +67,16 @@ public class TeamService {
                 .toList();
     }
 
+    /** GET /api/teams/by-project/{projectId} */
+    @Transactional(readOnly = true)
+    public Optional<TeamDtos.Detail> findByProject(Long projectId) {
+        AuthUser caller = CurrentUser.get();
+        return teamRepository.findByProjectId(projectId).stream()
+                .filter(t -> { try { assertCanView(caller, t); return true; } catch (Exception e) { return false; } })
+                .findFirst()
+                .map(this::toDetail);
+    }
+
     /** GET /api/teams/{id} - team info + member list (Member, Email, Skill, Team Role). */
     @Transactional(readOnly = true)
     public TeamDtos.Detail get(Long id) {
@@ -77,7 +88,7 @@ public class TeamService {
     /** POST /api/teams */
     @Transactional
     public TeamDtos.Detail create(TeamRequest request) {
-        AuthUser user = CurrentUser.get();
+        AuthUser caller = CurrentUser.get();
 
         if (request == null || request.getName() == null || request.getName().isBlank()) {
             throw new IllegalArgumentException("Team name is required");
@@ -87,8 +98,12 @@ public class TeamService {
         if (request.getProjectId() != null) {
             project = projectRepository.findById(request.getProjectId())
                     .orElseThrow(() -> new EntityNotFoundException("Project not found with id " + request.getProjectId()));
-            access.assertCanManage(user, project);
-        } else if (!user.isAdmin()) {
+            access.assertCanManageProjectTeam(caller, project);
+            // Enforce one team per project
+            if (!teamRepository.findByProjectId(request.getProjectId()).isEmpty()) {
+                throw new BusinessRuleException("This project already has a team. Delete the existing team first.");
+            }
+        } else if (!caller.isAdmin()) {
             throw new IllegalArgumentException("Project is required for non-admin team creation");
         }
 
@@ -106,16 +121,27 @@ public class TeamService {
         team.setProject(project);
         team = teamRepository.save(team);
 
+        // Link the team back to the project so project.team_id is set
+        if (project != null) {
+            project.setTeam(team);
+            projectRepository.save(project);
+        }
+
+        if (request.getTeamLeadId() != null) {
+            User lead = resolveTeamLead(request.getTeamLeadId());
+            attach(team, project, lead, "Team Lead");
+        }
+
         if (request.getMemberIds() != null) {
-            for (User member : resolveUsers(request.getMemberIds())) {
-                attach(team, project, member, DEFAULT_TEAM_ROLE);
+            for (User member : resolveMembers(request.getMemberIds())) {
+                attach(team, project, member, roleToTeamRole(member));
             }
         }
 
         return toDetail(team);
     }
 
-    /** PUT /api/teams/{id} - name / Team ID / description. */
+    /** PUT /api/teams/{id} - name / Team ID / description / teamLead / members. */
     @Transactional
     public TeamDtos.Detail update(Long id, TeamRequest request) {
         Team team = find(id);
@@ -137,14 +163,40 @@ public class TeamService {
             team.setDescription(request.getDescription());
         }
 
+        // Replace Team Lead: remove old one, add new one
+        if (request.getTeamLeadId() != null) {
+            teamMemberRepository.findByTeamId(id).stream()
+                    .filter(m -> "Team Lead".equalsIgnoreCase(m.getTeamRole()))
+                    .forEach(teamMemberRepository::delete);
+            User lead = resolveTeamLead(request.getTeamLeadId());
+            attach(team, team.getProject(), lead, "Team Lead");
+        }
+
+        // Replace members (non-lead): remove existing non-lead members, add new list
+        if (request.getMemberIds() != null) {
+            teamMemberRepository.findByTeamId(id).stream()
+                    .filter(m -> !"Team Lead".equalsIgnoreCase(m.getTeamRole()))
+                    .forEach(teamMemberRepository::delete);
+            for (User member : resolveMembers(request.getMemberIds())) {
+                attach(team, team.getProject(), member, roleToTeamRole(member));
+            }
+        }
+
         return toDetail(teamRepository.save(team));
     }
 
-    /** DELETE /api/teams/{id} - members are removed first (the old code failed on the FK). */
+    /** DELETE /api/teams/{id} - clears project FK, removes members, then deletes the team. */
     @Transactional
     public void delete(Long id) {
         Team team = find(id);
         assertCanManage(CurrentUser.get(), team);
+
+        // Clear the project's reference to this team so the FK doesn't block deletion
+        if (team.getProject() != null) {
+            Project project = team.getProject();
+            project.setTeam(null);
+            projectRepository.save(project);
+        }
 
         teamMemberRepository.deleteByTeamId(id);
         teamRepository.delete(team);
@@ -178,6 +230,10 @@ public class TeamService {
         }
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new EntityNotFoundException("User not found with id " + userId));
+
+        if (user.getRole() == com.neuroforge.backend.entity.Role.UNASSIGNED) {
+            throw new BusinessRuleException("Cannot add an UNASSIGNED user to a team. Ask an Admin to assign a system role first.");
+        }
 
         if (teamMemberRepository.findByTeamIdAndUserId(teamId, userId).isPresent()) {
             throw new BusinessRuleException("User is already a member of this team");
@@ -232,6 +288,47 @@ public class TeamService {
         return teamMemberRepository.save(member);
     }
 
+    private User resolveTeamLead(Long userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new EntityNotFoundException("User not found with id " + userId));
+        if (user.getRole() != com.neuroforge.backend.entity.Role.TEAM_LEAD
+                && user.getRole() != com.neuroforge.backend.entity.Role.ADMIN) {
+            throw new BusinessRuleException("Team Lead must have the Team Lead system role");
+        }
+        if (user.getRole() == com.neuroforge.backend.entity.Role.UNASSIGNED) {
+            throw new BusinessRuleException("Cannot add an UNASSIGNED user to a team.");
+        }
+        return user;
+    }
+
+    private Set<User> resolveMembers(List<Long> ids) {
+        Set<Long> distinct = ids.stream().filter(id -> id != null).collect(Collectors.toCollection(LinkedHashSet::new));
+        if (distinct.isEmpty()) return new LinkedHashSet<>();
+        List<User> users = userRepository.findAllById(distinct);
+        if (users.size() != distinct.size()) throw new IllegalArgumentException("One or more selected team members do not exist");
+        for (User u : users) {
+            com.neuroforge.backend.entity.Role r = u.getRole();
+            if (r == com.neuroforge.backend.entity.Role.UNASSIGNED) {
+                throw new BusinessRuleException("Cannot add UNASSIGNED user " + u.getFullName() + " to a team.");
+            }
+            if (r != com.neuroforge.backend.entity.Role.DEVELOPER
+                    && r != com.neuroforge.backend.entity.Role.TESTER
+                    && r != com.neuroforge.backend.entity.Role.QA
+                    && r != com.neuroforge.backend.entity.Role.TEAM_MEMBER) {
+                throw new BusinessRuleException(u.getFullName() + " must have a Developer, Tester or QA role to be added as a team member.");
+            }
+        }
+        return new LinkedHashSet<>(users);
+    }
+
+    private String roleToTeamRole(User user) {
+        return switch (user.getRole()) {
+            case TESTER -> "Tester";
+            case QA -> "QA";
+            default -> "Developer";
+        };
+    }
+
     private Set<User> resolveUsers(List<Long> ids) {
         Set<Long> distinct = ids.stream().filter(id -> id != null).collect(Collectors.toCollection(LinkedHashSet::new));
         if (distinct.isEmpty()) {
@@ -255,13 +352,11 @@ public class TeamService {
     }
 
     private void assertCanManage(AuthUser user, Team team) {
-        if (user.isAdmin()) {
-            return;
-        }
+        if (user.isAdmin()) return;
         if (team.getProject() == null) {
             throw new AccessDeniedException("Only an Admin can manage a team that is not linked to a project");
         }
-        access.assertCanManage(user, team.getProject());
+        access.assertCanManageProjectTeam(user, team.getProject());
     }
 
     private List<TeamDtos.MemberInfo> memberInfos(Long teamId) {
@@ -273,6 +368,10 @@ public class TeamService {
 
     private TeamDtos.Detail toDetail(Team team) {
         Project project = team.getProject();
+        List<TeamDtos.MemberInfo> members = memberInfos(team.getId());
+        TeamDtos.MemberInfo lead = members.stream()
+                .filter(m -> "Team Lead".equalsIgnoreCase(m.teamRole()))
+                .findFirst().orElse(null);
         return new TeamDtos.Detail(
                 team.getId(),
                 team.getName(),
@@ -281,6 +380,8 @@ public class TeamService {
                 project == null ? null : project.getId(),
                 project == null ? null : project.getName(),
                 project == null ? null : project.getCode(),
-                memberInfos(team.getId()));
+                lead == null ? null : lead.userId(),
+                lead == null ? null : lead.fullName(),
+                members);
     }
 }

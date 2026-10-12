@@ -29,10 +29,12 @@ export const TeamsProvider = ({ children }) => {
   const fetchTeams = async () => {
     const role = getCurrentRole();
 
-    // Teams are available only to ADMIN and PROJECT_MANAGER.
+    // Teams are available to ADMIN, PROJECT_MANAGER, PROJECT_LEAD, TEAM_LEAD.
     if (
       role !== "ADMIN" &&
-      role !== "PROJECT_MANAGER"
+      role !== "PROJECT_MANAGER" &&
+      role !== "PROJECT_LEAD" &&
+      role !== "TEAM_LEAD"
     ) {
       setTeams([]);
       setLoading(false);
@@ -87,47 +89,23 @@ export const TeamsProvider = ({ children }) => {
     fetchTeams();
   }, []);
 
-  const createTeam = async (name) => {
+  const createTeam = async (payload) => {
     try {
-            await axios.post(`${API_BASE}/teams`, {
-        name,
-        description: "",
-      });
-
+      const response = await axios.post(`${API_BASE}/teams`, payload);
       await fetchTeams();
-
-      return { success: true };
+      return { success: true, data: response.data };
     } catch (error) {
-      const message =
-        error.response?.data?.message ||
-        "Failed to create team.";
-
-      return {
-        success: false,
-        message,
-      };
+      return { success: false, message: error.response?.data?.message || "Failed to create team." };
     }
   };
 
-  const updateTeam = async (teamId, updates) => {
+  const updateTeam = async (teamId, payload) => {
     try {
-            await axios.put(`${API_BASE}/teams/${teamId}`, {
-        name: updates.name,
-        description: updates.description || "",
-      });
-
+      const response = await axios.put(`${API_BASE}/teams/${teamId}`, payload);
       await fetchTeams();
-
-      return { success: true };
+      return { success: true, data: response.data };
     } catch (error) {
-      const message =
-        error.response?.data?.message ||
-        "Failed to update team.";
-
-      return {
-        success: false,
-        message,
-      };
+      return { success: false, message: error.response?.data?.message || "Failed to update team." };
     }
   };
 
@@ -231,6 +209,18 @@ export const TeamsProvider = ({ children }) => {
     }
   };
 
+  const fetchTeamByProject = async (projectId) => {
+    try {
+      const response = await axios.get(`${API_BASE}/teams/by-project/${projectId}`);
+      return { success: true, data: response.data };
+    } catch (error) {
+      if (error.response?.status === 404) {
+        return { success: true, data: null };
+      }
+      return { success: false, data: null, message: error.response?.data?.message || "Failed to load team." };
+    }
+  };
+
   return (
     <TeamsContext.Provider
       value={{
@@ -243,6 +233,7 @@ export const TeamsProvider = ({ children }) => {
         addMember,
         updateMember,
         removeMember,
+        fetchTeamByProject,
       }}
     >
       {children}
