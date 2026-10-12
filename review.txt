@@ -1,0 +1,2167 @@
+package com.neuroforge.backend.service;
+
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Optional;
+
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.DisabledException;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.neuroforge.backend.dto.SignupRequest;
+import com.neuroforge.backend.dto.CreateUserRequest;
+import com.neuroforge.backend.dto.UpdateUserRequest;
+import com.neuroforge.backend.dto.UserDtos.ProfileProject;
+import com.neuroforge.backend.dto.UserDtos.ProfileResponse;
+import com.neuroforge.backend.dto.UserDtos.ProfileTask;
+import com.neuroforge.backend.dto.UserDtos.ProfileTeam;
+import com.neuroforge.backend.dto.UserDtos.UserOption;
+import com.neuroforge.backend.dto.UserDtos.UserResponse;
+import com.neuroforge.backend.entity.Project;
+import com.neuroforge.backend.entity.Role;
+import com.neuroforge.backend.entity.Task;
+import com.neuroforge.backend.entity.Team;
+import com.neuroforge.backend.entity.User;
+import com.neuroforge.backend.exception.BusinessRuleException;
+import com.neuroforge.backend.repository.ProjectRepository;
+import com.neuroforge.backend.repository.ProjectMemberAssignmentRepository;
+import com.neuroforge.backend.repository.TaskRepository;
+import com.neuroforge.backend.repository.TeamMemberRepository;
+import com.neuroforge.backend.repository.UserRepository;
+import com.neuroforge.backend.security.AuthUser;
+import com.neuroforge.backend.security.CurrentUser;
+
+import jakarta.persistence.EntityNotFoundException;
+import lombok.RequiredArgsConstructor;
+
+@Service
+@RequiredArgsConstructor
+public class UserService {
+
+    private final UserRepository userRepository;
+    private final PasswordEncoder passwordEncoder;
+    private final ProjectRepository projectRepository;
+    private final ProjectMemberAssignmentRepository projectMemberAssignmentRepository;
+    private final TeamMemberRepository teamMemberRepository;
+    private final TaskRepository taskRepository;
+    private final com.neuroforge.backend.repository.SubtaskRepository subtaskRepository;
+
+    // ------------------------------------------------------------------ auth
+
+    /**
+     * Signup. The role is NEVER read from the client: every new account is UNASSIGNED
+     * until an Admin promotes them to a real role.
+     */
+    @Transactional
+    public User register(SignupRequest request) {
+
+        if (request.getConfirmPassword() != null
+                && !request.getConfirmPassword().equals(request.getPassword())) {
+            throw new IllegalArgumentException("Password and confirm password do not match");
+        }
+
+        String email = request.getEmail().trim().toLowerCase();
+        if (userRepository.existsByEmailIgnoreCase(email)) {
+            throw new BusinessRuleException("An account with this email already exists");
+        }
+        String userCode = request.getUserCode();
+        if (userCode == null || userCode.isBlank()) userCode = uniqueUserCodeFromEmail(email);
+        else if (userRepository.existsByUserCodeIgnoreCase(userCode)) throw new BusinessRuleException("This User ID is already taken");
+
+        User user = new User();
+        user.setFullName(request.getFullName().trim());
+        user.setLegacyName(request.getFullName().trim());
+        user.setUserCode(userCode);
+        user.setEmail(email);
+        user.setContactNumber(request.getContactNumber() == null || request.getContactNumber().isBlank() ? null : request.getContactNumber().trim());
+        user.setSkill(request.getSkill());
+        user.setPassword(passwordEncoder.encode(request.getPassword()));
+        user.setRole(Role.UNASSIGNED);   // privileged/execution roles are assigned by Admin only
+        user.setActive(true);
+        user.setAvailabilityStatus("Active");
+
+        return userRepository.save(user);
+    }
+
+    /** Login with Email OR User ID + password. */
+    @Transactional(readOnly = true)
+    public User authenticate(String identifier, String rawPassword) {
+
+        String id = identifier.trim();
+
+        Optional<User> found = id.contains("@")
+                ? userRepository.findByEmailIgnoreCase(id)
+                : userRepository.findByUserCodeIgnoreCase(id);
+
+        User user = found.orElseThrow(() -> new BadCredentialsException("Invalid email/User ID or password"));
+
+        if (!passwordEncoder.matches(rawPassword, user.getPassword())) {
+            throw new BadCredentialsException("Invalid email/User ID or password");
+        }
+
+        if (!user.isActive()) {
+            throw new DisabledException("Your account is inactive. Please contact an administrator.");
+        }
+
+        return user;
+    }
+
+    private String uniqueUserCodeFromEmail(String email) {
+        String base = email.substring(0, email.indexOf('@')).replaceAll("[^A-Za-z0-9._-]", "");
+        if (base.length() < 3) base = "user";
+        base = base.substring(0, Math.min(base.length(), 24));
+        String candidate = base;
+        int suffix = 1;
+        while (userRepository.existsByUserCodeIgnoreCase(candidate)) {
+            String tail = String.valueOf(suffix++);
+            candidate = base.substring(0, Math.min(base.length(), 30 - tail.length())) + tail;
+        }
+        return candidate;
+    }
+
+    // ------------------------------------------------------------------ Users page (Admin)
+
+    @Transactional
+    public UserResponse createByAdmin(CreateUserRequest request) {
+        String email = request.getEmail().trim().toLowerCase();
+        if (userRepository.existsByEmailIgnoreCase(email)) throw new BusinessRuleException("An account with this email already exists");
+        String userCode = request.getUserCode();
+        if (userCode == null || userCode.isBlank()) {
+            String base = email.substring(0, email.indexOf('@')).replaceAll("[^A-Za-z0-9._-]", "");
+            if (base.length() < 3) base = "user";
+            base = base.substring(0, Math.min(base.length(), 24));
+            userCode = base;
+            int suffix = 1;
+            while (userRepository.existsByUserCodeIgnoreCase(userCode)) {
+                String tail = String.valueOf(suffix++);
+                userCode = base.substring(0, Math.min(base.length(), 30 - tail.length())) + tail;
+            }
+        } else if (userRepository.existsByUserCodeIgnoreCase(userCode)) {
+            throw new BusinessRuleException("This User ID is already taken");
+        }
+        User user = new User();
+        user.setFullName(request.getFullName().trim());
+        user.setLegacyName(user.getFullName());
+        user.setUserCode(userCode);
+        user.setEmail(email);
+        user.setContactNumber(request.getContactNumber());
+        user.setSkill(request.getSkill());
+        user.setRole(request.getRole() == null ? Role.UNASSIGNED : request.getRole());
+        user.setPassword(passwordEncoder.encode(request.getPassword() == null || request.getPassword().isBlank() ? "TempPass@123" : request.getPassword()));
+        setAvailabilityFields(user, request.getStatus() == null ? "Active" : request.getStatus(), false);
+        return UserResponse.from(userRepository.save(user));
+    }
+
+    @Transactional(readOnly = true)
+    public List<UserResponse> list(String search) {
+        List<User> users = search == null || search.isBlank()
+                ? userRepository.findAllByOrderByFullNameAsc()
+                : userRepository.search(search.trim());
+        return users.stream().map(UserResponse::from).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public UserResponse get(Long id) {
+        return UserResponse.from(getUserById(id));
+    }
+
+    /**
+     * Dropdown source for Admin/PM (project manager picker, member multi-select, team members).
+     * Active users only, no email/phone. Optional role filter, e.g. roles=PROJECT_MANAGER,ADMIN.
+     */
+    @Transactional(readOnly = true)
+    public List<UserOption> options(Collection<Role> roles) {
+        List<User> users = roles == null || roles.isEmpty()
+                ? userRepository.findByActiveTrueOrderByFullNameAsc()
+                : userRepository.findByActiveTrueAndRoleInOrderByFullNameAsc(roles);
+        return users.stream().map(UserOption::from).toList();
+    }
+
+    @Transactional
+    public UserResponse update(Long id, UpdateUserRequest request) {
+        User user = getUserById(id);
+
+        if (request.getFullName() != null && !request.getFullName().isBlank()) {
+            user.setFullName(request.getFullName().trim());
+            user.setLegacyName(request.getFullName().trim());
+        }
+
+        if (request.getEmail() != null && !request.getEmail().isBlank()) {
+            String email = request.getEmail().trim().toLowerCase();
+            if (userRepository.existsByEmailIgnoreCaseAndIdNot(email, id)) {
+                throw new BusinessRuleException("An account with this email already exists");
+            }
+            user.setEmail(email);
+        }
+
+        if (request.getUserCode() != null && !request.getUserCode().isBlank()) {
+            String userCode = request.getUserCode().trim();
+            if (userRepository.existsByUserCodeIgnoreCaseAndIdNot(userCode, id)) {
+                throw new BusinessRuleException("This User ID is already taken");
+            }
+            user.setUserCode(userCode);
+        }
+
+        if (request.getContactNumber() != null && !request.getContactNumber().isBlank()) {
+            user.setContactNumber(request.getContactNumber().trim());
+        }
+
+        if (request.getSkill() != null) {
+            user.setSkill(request.getSkill());
+        }
+
+        return UserResponse.from(userRepository.save(user));
+    }
+
+    /** PATCH /api/users/{id}/role (Admin only). */
+    @Transactional
+    public UserResponse changeRole(Long id, Role newRole) {
+        User user = getUserById(id);
+
+        if (user.getRole() == newRole) {
+            return UserResponse.from(user);
+        }
+
+        if (user.getRole() == Role.ADMIN && newRole != Role.ADMIN
+                && userRepository.countByRole(Role.ADMIN) <= 1) {
+            throw new BusinessRuleException("At least one Admin must remain in the system");
+        }
+
+        if (newRole == Role.DEVELOPER || newRole == Role.TESTER || newRole == Role.QA) {
+            long managed = projectRepository.countByProjectManagerId(id);
+            long led = projectRepository.countByProjectLeadId(id);
+            long teamLeadAssignments = teamMemberRepository.findByUserId(id).stream()
+                    .filter(tm -> "Team Lead".equalsIgnoreCase(tm.getTeamRole())).count();
+            if (managed > 0 || led > 0 || teamLeadAssignments > 0) {
+                throw new BusinessRuleException(user.getFullName() + " still has management responsibilities. Reassign projects/teams before changing this role.");
+            }
+        }
+
+        user.setRole(newRole);
+        return UserResponse.from(userRepository.save(user));
+    }
+
+    /** PATCH /api/users/{id}/status (Admin only): Active / Inactive. */
+    @Transactional
+    public UserResponse setStatus(Long id, Boolean active, String status) {
+        AuthUser caller = CurrentUser.get();
+        User user = getUserById(id);
+        boolean self = caller.userId().equals(id);
+        if (!caller.isAdmin() && !self) throw new AccessDeniedException("You can only update your own status");
+        String resolved = (status == null || status.isBlank()) ? ((active != null && active) ? "Active" : "Inactive") : status.trim();
+        setAvailabilityFields(user, resolved, self);
+        return UserResponse.from(userRepository.save(user));
+    }
+
+    private void setAvailabilityFields(User user, String status, boolean self) {
+        if (!List.of("Active", "Inactive", "In Meeting").contains(status)) throw new BusinessRuleException("Invalid user status");
+        if (self && "Inactive".equals(status)) throw new BusinessRuleException("You cannot deactivate your own account");
+        user.setAvailabilityStatus(status);
+        user.setActive(!"Inactive".equals(status));
+    }
+
+    /** PATCH /api/users/me/password (any authenticated user, on their own account only). */
+    @Transactional
+    public void changeOwnPassword(String currentPassword, String newPassword) {
+        AuthUser caller = CurrentUser.get();
+        User user = getUserById(caller.userId());
+
+        if (!passwordEncoder.matches(currentPassword, user.getPassword())) {
+            throw new BusinessRuleException("Current password is incorrect");
+        }
+
+        user.setPassword(passwordEncoder.encode(newPassword));
+        userRepository.save(user);
+    }
+
+    /**
+     * DELETE /api/users/{id} (Admin only).
+     * The user is removed from teams and project member lists and their tasks become unassigned.
+     * A user who still manages projects cannot be deleted (reassign the projects first).
+     */
+    @Transactional
+    public void delete(Long id) {
+        AuthUser caller = CurrentUser.get();
+
+        if (caller.userId().equals(id)) {
+            throw new BusinessRuleException("You cannot delete your own account here. Use the account menu to delete your own account.");
+        }
+
+        User user = getUserById(id);
+        assertNoOutstandingResponsibilities(user);
+        purgeAndDelete(user);
+    }
+
+    /**
+     * DELETE /api/users/me (self-service, any authenticated user).
+     * The id always comes from the caller's own token. Blocked if this is the last
+     * Admin in the system, or the user still manages/leads a project or team -
+     * same guard rails as the Admin-driven delete, just enforced on yourself.
+     */
+    @Transactional
+    public void deleteSelf() {
+        AuthUser caller = CurrentUser.get();
+        User user = getUserById(caller.userId());
+
+        if (user.getRole() == Role.ADMIN && userRepository.countByRole(Role.ADMIN) <= 1) {
+            throw new BusinessRuleException("You are the last Admin. Promote another user to Admin before deleting your account.");
+        }
+
+        assertNoOutstandingResponsibilities(user);
+        purgeAndDelete(user);
+    }
+
+    /** Shared guard for both delete paths: can't remove someone still managing/leading live work. */
+    private void assertNoOutstandingResponsibilities(User user) {
+        Long id = user.getId();
+        long managed = projectRepository.countByProjectManagerId(id);
+        long led = projectRepository.countByProjectLeadId(id);
+        long teamLeadAssignments = teamMemberRepository.findByUserId(id).stream()
+                .filter(tm -> "Team Lead".equalsIgnoreCase(tm.getTeamRole())).count();
+        if (managed > 0 || led > 0 || teamLeadAssignments > 0) {
+            throw new BusinessRuleException("You still have project/team responsibilities. Reassign them before deleting this account.");
+        }
+    }
+
+    /** Shared cleanup + delete used by both the Admin-driven and self-service delete. */
+    private void purgeAndDelete(User user) {
+        Long id = user.getId();
+        teamMemberRepository.deleteByUserId(id);
+        projectMemberAssignmentRepository.deleteByUserId(id);
+        projectRepository.removeUserFromAllProjects(id);
+        taskRepository.unassignUser(id);
+        subtaskRepository.unassignUser(id);
+        userRepository.deleteById(id);
+    }
+
+    // ------------------------------------------------------------------ profile
+
+    /**
+     * GET /api/users/{id}/profile - one call with everything the profile page shows.
+     * Allowed for an Admin (any user) and for a user viewing their own profile.
+     */
+    @Transactional(readOnly = true)
+    public ProfileResponse profile(Long id) {
+        AuthUser caller = CurrentUser.get();
+
+        if (!caller.isAdmin() && !caller.userId().equals(id)) {
+            throw new AccessDeniedException("You can only view your own profile");
+        }
+
+        User user = getUserById(id);
+
+        List<ProfileProject> projects = projectRepository.findManagedOrMemberOf(id).stream()
+                .map(project -> new ProfileProject(
+                        project.getId(),
+                        project.getName(),
+                        project.getCode(),
+                        project.getStatus(),
+                        project.getPriority(),
+                        project.getStartDate(),
+                        project.getEndDate()))
+                .toList();
+
+        List<ProfileTeam> teams = teamMemberRepository.findByUserId(id).stream()
+                .map(member -> {
+                    Team team = member.getTeam();
+                    Project project = team.getProject();
+                    return new ProfileTeam(
+                            team.getId(),
+                            team.getName(),
+                            team.getTeamCode(),
+                            member.getTeamRole(),
+                            project == null ? null : project.getId(),
+                            project == null ? null : project.getName(),
+                            project == null ? null : project.getCode());
+                })
+                .toList();
+
+        List<ProfileTask> tasks = taskRepository.findByAssigneeId(id).stream()
+                .sorted(Comparator.comparing(Task::getId))
+                .map(task -> new ProfileTask(
+                        task.getId(),
+                        task.getTaskKey(),
+                        task.getTitle(),
+                        task.getBoardStatus().getLabel(),
+                        task.getProject().getName(),
+                        task.getPriority(),
+                        task.getDueDate()))
+                .toList();
+
+        return new ProfileResponse(
+                user.getId(),
+                user.getUserCode(),
+                user.getFullName(),
+                user.getEmail(),
+                user.getContactNumber(),
+                user.getSkill() == null ? null : user.getSkill().getLabel(),
+                user.getRole().name(),
+                user.getRole().getLabel(),
+                user.isActive(),
+                user.getAvailabilityStatus(),
+                user.getCreatedAt(),
+                projects,
+                teams,
+                tasks);
+    }
+
+    // ------------------------------------------------------------------ helpers
+
+    @Transactional(readOnly = true)
+    public User getUserById(Long id) {
+        return userRepository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("User not found with id " + id));
+    }
+}package com.neuroforge.backend.controller;
+
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.neuroforge.backend.dto.ChangePasswordRequest;
+import com.neuroforge.backend.dto.UpdateUserRequest;
+import com.neuroforge.backend.dto.CreateUserRequest;
+import com.neuroforge.backend.dto.UserDtos.ProfileResponse;
+import com.neuroforge.backend.dto.UserDtos.RoleUpdateRequest;
+import com.neuroforge.backend.dto.UserDtos.StatusUpdateRequest;
+import com.neuroforge.backend.dto.UserDtos.UserOption;
+import com.neuroforge.backend.dto.UserDtos.UserResponse;
+import com.neuroforge.backend.entity.Role;
+import com.neuroforge.backend.service.UserService;
+
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+
+@RestController
+@RequestMapping("/api/users")
+@RequiredArgsConstructor
+public class UserController {
+
+    private final UserService userService;
+
+    @org.springframework.web.bind.annotation.PostMapping
+    @PreAuthorize("hasRole('ADMIN')")
+    public UserResponse create(@Valid @RequestBody CreateUserRequest request) {
+        return userService.createByAdmin(request);
+    }
+
+    /** Users page: Name, Email, Skill, Access Role, Status. Optional ?search= (name / email / user id). Admin only. */
+    @GetMapping
+    @PreAuthorize("hasRole('ADMIN')")
+    public List<UserResponse> list(@RequestParam(required = false) String search) {
+        return userService.list(search);
+    }
+
+    /**
+     * Dropdown data for Admin/PM (project manager picker, member multi-select, team members):
+     * id, name and skill only - "Peter (Backend Developer)".
+     * Optional ?roles=PROJECT_MANAGER,ADMIN filter (e.g. for the Project Manager dropdown).
+     */
+    @GetMapping("/options")
+    @PreAuthorize("hasAnyRole('ADMIN','PROJECT_MANAGER','PROJECT_LEAD','TEAM_LEAD')")
+    public List<UserOption> options(@RequestParam(required = false) List<Role> roles) {
+        return userService.options(roles);
+    }
+
+    @GetMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public UserResponse get(@PathVariable Long id) {
+        return userService.get(id);
+    }
+
+    @PutMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public UserResponse update(@PathVariable Long id, @Valid @RequestBody UpdateUserRequest request) {
+        return userService.update(id, request);
+    }
+
+    /** Role dropdown on the Users page (Team Member -> Project Manager, ...). Admin only. */
+    @PatchMapping("/{id}/role")
+    @PreAuthorize("hasRole('ADMIN')")
+    public UserResponse changeRole(@PathVariable Long id, @Valid @RequestBody RoleUpdateRequest request) {
+        return userService.changeRole(id, request.role());
+    }
+
+    /** Current working status. Admin can set any user; everyone can set their own status. */
+    @PatchMapping("/{id}/status")
+    public UserResponse changeStatus(@PathVariable Long id, @Valid @RequestBody StatusUpdateRequest request) {
+        return userService.setStatus(id, request.active(), request.status());
+    }
+
+    /** Self-service password change. Requires the current password for verification. */
+    @PatchMapping("/me/password")
+    public ResponseEntity<Map<String, String>> changeOwnPassword(@Valid @RequestBody ChangePasswordRequest request) {
+        userService.changeOwnPassword(request.getCurrentPassword(), request.getNewPassword());
+        return ResponseEntity.ok(Map.of("message", "Password updated successfully"));
+    }
+
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Map<String, String>> delete(@PathVariable Long id) {
+        userService.delete(id);
+        return ResponseEntity.ok(Map.of("message", "User deleted successfully"));
+    }
+
+    /**
+     * Self-service account deletion. Any authenticated user deletes their OWN account -
+     * the id always comes from the caller's token, never from the request, so no one
+     * can pass another user's id here. Blocked if you're the last Admin, or you still
+     * manage/lead a project or team (same rule the Admin-driven delete enforces).
+     */
+    @DeleteMapping("/me")
+    public ResponseEntity<Map<String, String>> deleteSelf() {
+        userService.deleteSelf();
+        return ResponseEntity.ok(Map.of("message", "Your account has been deleted"));
+    }
+
+    /** Single call for the profile page. Admin: any user. Everyone else: their own profile only (checked in the service). */
+    @GetMapping("/{id}/profile")
+    public ProfileResponse profile(@PathVariable Long id) {
+        return userService.profile(id);
+    }
+}package com.neuroforge.backend.service;
+
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.neuroforge.backend.dto.ProjectDtos;
+import com.neuroforge.backend.dto.ProjectRequest;
+import com.neuroforge.backend.dto.TaskDtos;
+import com.neuroforge.backend.entity.BoardStatus;
+import com.neuroforge.backend.entity.Priority;
+import com.neuroforge.backend.entity.Project;
+import com.neuroforge.backend.entity.ProjectStatus;
+import com.neuroforge.backend.entity.Role;
+import com.neuroforge.backend.entity.Sprint;
+import com.neuroforge.backend.entity.Task;
+import com.neuroforge.backend.entity.Team;
+import com.neuroforge.backend.entity.TeamMember;
+import com.neuroforge.backend.entity.User;
+import com.neuroforge.backend.exception.BusinessRuleException;
+import com.neuroforge.backend.repository.ProjectRepository;
+import com.neuroforge.backend.repository.SprintRepository;
+import com.neuroforge.backend.repository.TaskDependencyRepository;
+import com.neuroforge.backend.repository.TaskRepository;
+import com.neuroforge.backend.repository.TeamMemberRepository;
+import com.neuroforge.backend.repository.TeamRepository;
+import com.neuroforge.backend.repository.UserRepository;
+import com.neuroforge.backend.security.AuthUser;
+import com.neuroforge.backend.security.CurrentUser;
+
+import jakarta.persistence.EntityNotFoundException;
+import lombok.RequiredArgsConstructor;
+
+@Service
+@RequiredArgsConstructor
+public class ProjectService {
+
+    private final ProjectRepository projectRepository;
+    private final UserRepository userRepository;
+    private final TeamRepository teamRepository;
+    private final TeamMemberRepository teamMemberRepository;
+    private final TaskRepository taskRepository;
+    private final SprintRepository sprintRepository;
+    private final TaskDependencyRepository taskDependencyRepository;
+    private final com.neuroforge.backend.repository.SubtaskRepository subtaskRepository;
+    private final com.neuroforge.backend.repository.ProjectMemberAssignmentRepository projectMemberAssignmentRepository;
+    private final AccessService access;
+
+    // ------------------------------------------------------------------ queries
+
+    /** GET /api/projects - scoped by the caller's role in the query itself. */
+    @Transactional(readOnly = true)
+    public List<ProjectDtos.Summary> list() {
+        AuthUser user = CurrentUser.get();
+        return access.visibleProjects(user).stream()
+                .map(ProjectDtos.Summary::from)
+                .toList();
+    }
+
+    /** GET /api/projects/{id} */
+    @Transactional(readOnly = true)
+    public ProjectDtos.Detail get(Long id) {
+        Project project = find(id);
+        access.assertCanView(CurrentUser.get(), project);
+        return toDetail(project);
+    }
+
+    // ------------------------------------------------------------------ commands
+
+    /** POST /api/projects (Admin / Project Manager). Status is always NOT_STARTED; priority is auto-suggested. */
+    @Transactional
+    public ProjectDtos.Detail create(ProjectRequest request) {
+        AuthUser caller = CurrentUser.get();
+        if (!(caller.isAdmin() || caller.isProjectManager())) {
+            throw new AccessDeniedException("Only Admin or Project Manager can create projects");
+        }
+
+        validate(request);
+
+        String code = clean(request.getCode());
+        if (code != null && projectRepository.existsByCodeIgnoreCase(code)) {
+            throw new BusinessRuleException("A project with Project ID '" + code + "' already exists");
+        }
+
+        Project project = new Project();
+        project.setName(request.getName().trim());
+        project.setDescription(request.getDescription());
+        project.setCode(code);
+        project.setStartDate(request.getStartDate());
+        project.setEndDate(request.getEndDate());
+
+        // Status: client can set initial status (defaults to NOT_STARTED)
+        if (request.getStatus() != null && !request.getStatus().isBlank()) {
+            project.setStatus(ProjectStatus.from(request.getStatus()).getLabel());
+        } else {
+            project.setStatus(ProjectStatus.NOT_STARTED.getLabel());
+        }
+
+        // Priority: auto-calculated from the date range, but the PM may override the suggested value.
+        Priority priority = request.getPriority() != null && !request.getPriority().isBlank()
+                ? Priority.parse(request.getPriority())
+                : suggestPriority(request.getStartDate(), request.getEndDate());
+        project.setPriority(priority.getLabel());
+
+        // Admin/PM may default the manager to themselves; Project Lead must explicitly choose a Project Manager.
+        Long managerId = request.getProjectManagerId();
+        if (managerId == null) {
+            if (caller.isProjectManager() || caller.isAdmin()) managerId = caller.userId();
+            else throw new BusinessRuleException("A Project Manager must be selected when a Project Lead creates a project");
+        }
+        project.setProjectManager(resolveManager(managerId));
+
+        if (request.getProjectLeadId() != null) {
+            project.setProjectLead(resolveProjectLead(request.getProjectLeadId()));
+        }
+
+        project.setProjectKey(nextProjectKey(code, request.getName()));
+        project.setTaskCounter(0);
+
+        Project saved = projectRepository.save(project);
+        Team team = resolveOrCreateTeam(saved, request.getTeamId());
+        saved.setTeam(team);
+
+        if (request.getMemberIds() != null) {
+            saved.getMembers().addAll(resolveUsers(request.getMemberIds()));
+        }
+
+        saved = projectRepository.save(saved);
+        syncAssignments(saved);
+        return toDetail(saved);
+    }
+
+    /** PUT /api/projects/{id} (Admin, or the PM who manages it). */
+    @Transactional
+    public ProjectDtos.Detail update(Long id, ProjectRequest request) {
+        AuthUser caller = CurrentUser.get();
+        Project project = find(id);
+        access.assertCanManage(caller, project);
+
+        validate(request);
+
+        String code = clean(request.getCode());
+        if (code != null && projectRepository.existsByCodeIgnoreCaseAndIdNot(code, id)) {
+            throw new BusinessRuleException("A project with Project ID '" + code + "' already exists");
+        }
+
+        project.setName(request.getName().trim());
+        project.setDescription(request.getDescription());
+        project.setCode(code);
+        project.setStartDate(request.getStartDate());
+        project.setEndDate(request.getEndDate());
+
+        // Priority stays editable; if not supplied the current value is kept.
+        if (request.getPriority() != null && !request.getPriority().isBlank()) {
+            project.setPriority(Priority.parse(request.getPriority()).getLabel());
+        }
+
+        if (request.getProjectLeadId() != null) {
+            Long currentLeadId = project.getProjectLead() == null ? null : project.getProjectLead().getId();
+            if (!request.getProjectLeadId().equals(currentLeadId)) {
+                project.setProjectLead(resolveProjectLead(request.getProjectLeadId()));
+            }
+        }
+
+        if (request.getTeamId() != null && (project.getTeam() == null || !request.getTeamId().equals(project.getTeam().getId()))) {
+            project.setTeam(resolveOrCreateTeam(project, request.getTeamId()));
+        }
+
+        // Only an Admin may hand the project to a different manager.
+        Long newManagerId = request.getProjectManagerId();
+        Long currentManagerId = project.getProjectManager() == null ? null : project.getProjectManager().getId();
+        if (newManagerId != null && !newManagerId.equals(currentManagerId)) {
+            if (!caller.isAdmin()) {
+                throw new AccessDeniedException("Only an Admin can change the Project Manager");
+            }
+            project.setProjectManager(resolveManager(newManagerId));
+        }
+
+        if (request.getMemberIds() != null) {
+            replaceMembers(project, resolveUsers(request.getMemberIds()));
+        }
+
+        // Status: update if provided in request, otherwise keep or re-derive
+        if (request.getStatus() != null && !request.getStatus().isBlank()) {
+            project.setStatus(ProjectStatus.from(request.getStatus()).getLabel());
+        } else if (project.getStatus() == null || project.getStatus().isBlank()) {
+            project.setStatus(computeStatus(taskRepository.findByProjectId(id)).getLabel());
+        }
+
+        Project saved = projectRepository.save(project);
+        syncAssignments(saved);
+        return toDetail(saved);
+    }
+
+    /** DELETE /api/projects/{id} (Admin, or the PM who manages it). */
+    @Transactional
+    public void delete(Long id) {
+        Project project = find(id);
+        if (!CurrentUser.get().isAdmin()) {
+            throw new AccessDeniedException("Only an Admin can delete projects");
+        }
+
+        List<Task> tasks = taskRepository.findByProjectId(id);
+
+        // Delete all dependency and subtask records related to these tasks first.
+        for (Task task : tasks) {
+            Long taskId = task.getId();
+            taskDependencyRepository.deleteByTaskId(taskId);
+            taskDependencyRepository.deleteByDependsOnId(taskId);
+            subtaskRepository.deleteByTaskId(taskId);
+        }
+        taskDependencyRepository.flush();
+        subtaskRepository.flush();
+
+        for (Task task : tasks) {
+            taskRepository.delete(task);
+        }
+        taskRepository.flush();
+
+        // Teams belong to a project: remove their members, then the teams.
+        for (Team team : teamRepository.findByProjectId(id)) {
+            teamMemberRepository.deleteByTeamId(team.getId());
+            teamRepository.delete(team);
+        }
+        teamRepository.flush();
+
+        List<Sprint> sprints = sprintRepository.findByProjectIdOrderByStartDateDesc(id);
+        for (Sprint sprint : sprints) {
+            sprintRepository.delete(sprint);
+        }
+        sprintRepository.flush();
+
+        projectMemberAssignmentRepository.deleteByProjectId(id);
+
+        // project_members rows are removed automatically (Project owns the join table).
+        projectRepository.delete(project);
+        projectRepository.flush();
+    }
+
+    @Transactional(readOnly = true)
+    public List<ProjectDtos.MemberInfo> members(Long projectId) {
+        Project project = find(projectId);
+        access.assertCanView(CurrentUser.get(), project);
+        return projectMemberAssignmentRepository.findByProjectIdOrderByAssignedAtAsc(projectId).stream()
+                .map(ProjectDtos.MemberInfo::from).toList();
+    }
+
+    @Transactional
+    public ProjectDtos.MemberInfo addMember(Long projectId, Long userId, String projectRole) {
+        Project project = find(projectId);
+        access.assertCanManageProjectTeam(CurrentUser.get(), project);
+        if (projectMemberAssignmentRepository.findByProjectIdAndUserId(projectId, userId).isPresent()) {
+            throw new BusinessRuleException("This user is already a member of the project");
+        }
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new EntityNotFoundException("User not found with id " + userId));
+        if (!user.isActive()) throw new BusinessRuleException("Inactive users cannot be assigned to a project");
+        validateProjectRole(projectRole);
+        validateProjectRoleMatchesUser(user, projectRole);
+        if ("Team Lead".equalsIgnoreCase(projectRole)
+                && projectMemberAssignmentRepository.findByProjectIdOrderByAssignedAtAsc(projectId).stream()
+                    .anyMatch(m -> "Team Lead".equalsIgnoreCase(m.getProjectRole()))) {
+            throw new BusinessRuleException("This project already has a Team Lead");
+        }
+        project.getMembers().add(user);
+        projectRepository.save(project);
+        syncTeamMember(project, user, projectRole);
+        var assignment = new com.neuroforge.backend.entity.ProjectMemberAssignment();
+        assignment.setProject(project);
+        assignment.setUser(user);
+        assignment.setProjectRole(normalizeProjectRole(projectRole));
+        assignment.setMemberStatus("Active");
+        return ProjectDtos.MemberInfo.from(projectMemberAssignmentRepository.save(assignment));
+    }
+
+    @Transactional
+    public ProjectDtos.MemberInfo updateMember(Long projectId, Long userId, String projectRole) {
+        Project project = find(projectId);
+        access.assertCanManageProjectTeam(CurrentUser.get(), project);
+        validateProjectRole(projectRole);
+        var assignment = projectMemberAssignmentRepository.findByProjectIdAndUserId(projectId, userId)
+                .orElseThrow(() -> new EntityNotFoundException("Project member was not found"));
+        validateProjectRoleMatchesUser(assignment.getUser(), projectRole);
+        if ("Team Lead".equalsIgnoreCase(projectRole)
+                && !"Team Lead".equalsIgnoreCase(assignment.getProjectRole())
+                && projectMemberAssignmentRepository.findByProjectIdOrderByAssignedAtAsc(projectId).stream()
+                    .anyMatch(m -> !m.getUser().getId().equals(userId) && "Team Lead".equalsIgnoreCase(m.getProjectRole()))) {
+            throw new BusinessRuleException("This project already has a Team Lead");
+        }
+        assignment.setProjectRole(normalizeProjectRole(projectRole));
+        syncTeamMember(project, assignment.getUser(), projectRole);
+        return ProjectDtos.MemberInfo.from(projectMemberAssignmentRepository.save(assignment));
+    }
+
+    @Transactional
+    public ProjectDtos.MemberInfo updateMemberStatus(Long projectId, Long userId, String status) {
+        Project project = find(projectId);
+        if (!status.equals("Active") && !status.equals("Inactive") && !status.equals("In Meeting")) {
+            throw new IllegalArgumentException("Invalid project member status");
+        }
+        AuthUser caller = CurrentUser.get();
+        if (!caller.userId().equals(userId)) {
+            access.assertCanManageProjectTeam(caller, project);
+        }
+        var assignment = projectMemberAssignmentRepository.findByProjectIdAndUserId(projectId, userId)
+                .orElseThrow(() -> new EntityNotFoundException("Project member was not found"));
+        assignment.setMemberStatus(status);
+        return ProjectDtos.MemberInfo.from(projectMemberAssignmentRepository.save(assignment));
+    }
+
+    @Transactional
+    public void removeMember(Long projectId, Long userId) {
+        Project project = find(projectId);
+        access.assertCanManageProjectTeam(CurrentUser.get(), project);
+        if (taskRepository.existsByProjectIdAndAssigneeIdAndBoardStatusNot(projectId, userId, BoardStatus.DONE)) {
+            throw new BusinessRuleException("The member still has unfinished tasks in this project");
+        }
+        project.getMembers().removeIf(user -> user.getId().equals(userId));
+        projectRepository.save(project);
+        projectMemberAssignmentRepository.deleteByProjectIdAndUserId(projectId, userId);
+        for (Team team : teamRepository.findByProjectId(projectId)) {
+            teamMemberRepository.findByTeamIdAndUserId(team.getId(), userId).ifPresent(teamMemberRepository::delete);
+        }
+    }
+
+    private void validateProjectRoleMatchesUser(User user, String value) {
+        String normalized = normalizeProjectRole(value);
+        Role role = user.getRole();
+        boolean ok = switch (normalized) {
+            case "Team Lead" -> role == Role.TEAM_LEAD || role == Role.ADMIN;
+            case "Tester" -> role == Role.TESTER;
+            case "QA" -> role == Role.QA;
+            default -> role == Role.DEVELOPER || role == Role.TEAM_MEMBER || role == Role.ADMIN;
+        };
+        if (!ok) throw new BusinessRuleException("Project role " + normalized + " does not match the user's system role " + role.getLabel());
+    }
+
+    private void validateProjectRole(String value) {
+        String role = normalizeProjectRole(value);
+        if (!(role.equals("Team Lead") || role.equals("Developer") || role.equals("Tester") || role.equals("QA"))) {
+            throw new IllegalArgumentException("Project role must be Team Lead, Developer, Tester or QA");
+        }
+    }
+
+    private String normalizeProjectRole(String value) {
+        if (value == null) return "Developer";
+        String key = value.trim().replace('_', ' ').replace('-', ' ');
+        if (key.equalsIgnoreCase("team lead")) return "Team Lead";
+        if (key.equalsIgnoreCase("tester")) return "Tester";
+        if (key.equalsIgnoreCase("qa") || key.equalsIgnoreCase("qa specialist")) return "QA";
+        return "Developer";
+    }
+
+    // ------------------------------------------------------------------ priority
+
+    /**
+     * Auto priority from the project duration:
+     *   <= 2 weeks (14 days)  -> High
+     *   <= 1 month (30 days)  -> Medium
+     *   longer                -> Low
+     * Missing dates -> Medium.
+     */
+    public static Priority suggestPriority(java.time.LocalDate start, java.time.LocalDate end) {
+        if (start == null || end == null) {
+            return Priority.MEDIUM;
+        }
+        long days = ChronoUnit.DAYS.between(start, end);
+        if (days <= 14) {
+            return Priority.HIGH;
+        }
+        if (days <= 30) {
+            return Priority.MEDIUM;
+        }
+        return Priority.LOW;
+    }
+
+    public ProjectDtos.PrioritySuggestion suggestion(java.time.LocalDate start, java.time.LocalDate end) {
+        if (start != null && end != null && end.isBefore(start)) {
+            throw new IllegalArgumentException("End date cannot be before start date");
+        }
+        long days = start == null || end == null ? 0 : ChronoUnit.DAYS.between(start, end);
+        return new ProjectDtos.PrioritySuggestion(suggestPriority(start, end).getLabel(), days);
+    }
+
+    // ------------------------------------------------------------------ status (auto-calculated)
+
+    /**
+     * Status rule, derived from the tasks:
+     *   no tasks, or every task still To Do -> Not Started
+     *   every task Done                     -> Completed
+     *   anything else                       -> In Progress
+     */
+    public static ProjectStatus computeStatus(List<Task> tasks) {
+        if (tasks.isEmpty()) {
+            return ProjectStatus.NOT_STARTED;
+        }
+        boolean allDone = tasks.stream().allMatch(t -> t.getBoardStatus() == BoardStatus.DONE);
+        if (allDone) {
+            return ProjectStatus.COMPLETED;
+        }
+        boolean anyStarted = tasks.stream().anyMatch(t -> t.getBoardStatus() != BoardStatus.TODO);
+        return anyStarted ? ProjectStatus.IN_PROGRESS : ProjectStatus.NOT_STARTED;
+    }
+
+    /** Called after every task create / update / delete / status change. */
+    @Transactional
+    public void recalculateStatus(Project project) {
+        if ("On Hold".equalsIgnoreCase(project.getStatus())) {
+            List<Task> tasks = taskRepository.findByProjectId(project.getId());
+            if (!tasks.isEmpty() && tasks.stream().allMatch(t -> t.getBoardStatus() == BoardStatus.DONE)) {
+                project.setStatus(ProjectStatus.COMPLETED.getLabel());
+                projectRepository.save(project);
+            }
+            return;
+        }
+
+        List<Task> tasks = taskRepository.findByProjectId(project.getId());
+        if (tasks.isEmpty()) {
+            return;
+        }
+
+        boolean allDone = tasks.stream().allMatch(t -> t.getBoardStatus() == BoardStatus.DONE);
+        if (allDone) {
+            if (!ProjectStatus.COMPLETED.getLabel().equals(project.getStatus())) {
+                project.setStatus(ProjectStatus.COMPLETED.getLabel());
+                projectRepository.save(project);
+            }
+            return;
+        }
+
+        boolean anyActive = tasks.stream().anyMatch(t -> t.getBoardStatus() != BoardStatus.TODO);
+        if (anyActive && ProjectStatus.NOT_STARTED.getLabel().equalsIgnoreCase(project.getStatus())) {
+            project.setStatus(ProjectStatus.IN_PROGRESS.getLabel());
+            projectRepository.save(project);
+        }
+    }
+
+    @Transactional
+    public void recalculateStatusByTaskId(Long taskId) {
+        taskRepository.findById(taskId).ifPresent(task -> recalculateStatus(task.getProject()));
+    }
+
+    /** Dedicated atomic status update (PATCH /api/projects/{id}/status). */
+    @Transactional
+    public ProjectDtos.Detail updateStatus(Long id, String newStatus) {
+        AuthUser caller = CurrentUser.get();
+        Project project = find(id);
+        access.assertCanManage(caller, project);
+
+        ProjectStatus target = ProjectStatus.from(newStatus);
+        project.setStatus(target.getLabel());
+        Project saved = projectRepository.save(project);
+        return toDetail(saved);
+    }
+
+    /** Run once at startup so projects that lack a status get an initial one. */
+    @Transactional
+    public void recalculateAllStatuses() {
+        projectRepository.findAll().forEach(p -> {
+            if (p.getStatus() == null || p.getStatus().isBlank()) {
+                recalculateStatus(p);
+            }
+        });
+    }
+
+    // ------------------------------------------------------------------ helpers
+
+    private Project find(Long id) {
+        return projectRepository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("Project not found with id " + id));
+    }
+
+    private void validate(ProjectRequest request) {
+        if (request == null || request.getName() == null || request.getName().isBlank()) {
+            throw new IllegalArgumentException("Project name is required");
+        }
+        if (request.getStartDate() != null && request.getEndDate() != null
+                && request.getEndDate().isBefore(request.getStartDate())) {
+            throw new IllegalArgumentException("End date cannot be before start date");
+        }
+    }
+
+    private String clean(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private User resolveProjectLead(Long leadId) {
+        User lead = userRepository.findById(leadId)
+                .orElseThrow(() -> new IllegalArgumentException("Project Lead not found with id " + leadId));
+        if (lead.getRole() != Role.PROJECT_LEAD && lead.getRole() != Role.ADMIN) {
+            throw new IllegalArgumentException("Project Lead must have the Project Lead or Admin role");
+        }
+        if (!lead.isActive()) {
+            throw new IllegalArgumentException("The selected Project Lead is inactive");
+        }
+        return lead;
+    }
+
+    private Team resolveOrCreateTeam(Project project, Long teamId) {
+        if (teamId != null) {
+            Team team = teamRepository.findById(teamId)
+                    .orElseThrow(() -> new IllegalArgumentException("Team not found with id " + teamId));
+            if (team.getProject() != null && !team.getProject().getId().equals(project.getId())) {
+                throw new IllegalArgumentException("Selected team belongs to another project");
+            }
+            if (team.getProject() == null) {
+                team.setProject(project);
+                return teamRepository.save(team);
+            }
+            return team;
+        }
+
+        Team team = new Team();
+        team.setName(project.getName() + " Team");
+        team.setTeamCode("TEAM-" + String.format("%02d", project.getId()));
+        team.setDescription("Default project team");
+        team.setProject(project);
+        return teamRepository.save(team);
+    }
+
+    private void syncAssignments(Project project) {
+        Set<Long> memberIds = project.getMembers().stream().map(User::getId).collect(Collectors.toSet());
+        for (com.neuroforge.backend.entity.ProjectMemberAssignment assignment : projectMemberAssignmentRepository.findByProjectIdOrderByAssignedAtAsc(project.getId())) {
+            if (!memberIds.contains(assignment.getUser().getId())) {
+                projectMemberAssignmentRepository.delete(assignment);
+            }
+        }
+        for (User user : project.getMembers()) {
+            var existing = projectMemberAssignmentRepository.findByProjectIdAndUserId(project.getId(), user.getId());
+            if (existing.isEmpty()) {
+                var assignment = new com.neuroforge.backend.entity.ProjectMemberAssignment();
+                assignment.setProject(project);
+                assignment.setUser(user);
+                assignment.setProjectRole(projectRoleFromUser(user));
+                assignment.setMemberStatus(user.isActive() ? "Active" : "Inactive");
+                projectMemberAssignmentRepository.save(assignment);
+            }
+            syncTeamMember(project, user, projectRoleFromUser(user));
+        }
+    }
+
+    private void syncTeamMember(Project project, User user, String projectRole) {
+        if (project.getTeam() == null || user == null) return;
+        String normalized = normalizeProjectRole(projectRole);
+        TeamMember member = teamMemberRepository.findByTeamIdAndUserId(project.getTeam().getId(), user.getId())
+                .orElseGet(() -> {
+                    TeamMember tm = new TeamMember();
+                    tm.setTeam(project.getTeam());
+                    tm.setUser(user);
+                    return tm;
+                });
+        member.setTeamRole(normalized);
+        teamMemberRepository.save(member);
+    }
+
+    private String projectRoleFromUser(User user) {
+        return switch (user.getRole()) {
+            case TEAM_LEAD -> "Team Lead";
+            case TESTER -> "Tester";
+            case QA -> "QA";
+            case PROJECT_LEAD -> "Project Lead";
+            case PROJECT_MANAGER -> "Project Manager";
+            case ADMIN -> "Admin";
+            default -> "Developer";
+        };
+    }
+
+    /** The project manager must be an existing, active user whose role is Project Manager or Admin. */
+    private User resolveManager(Long managerId) {
+        User manager = userRepository.findById(managerId)
+                .orElseThrow(() -> new IllegalArgumentException("Project Manager not found with id " + managerId));
+        if (manager.getRole() != Role.PROJECT_MANAGER && manager.getRole() != Role.ADMIN) {
+            throw new IllegalArgumentException("Project Manager must be a user with the Project Manager or Admin role");
+        }
+        if (!manager.isActive()) {
+            throw new IllegalArgumentException("The selected Project Manager is inactive");
+        }
+        return manager;
+    }
+
+    private Set<User> resolveUsers(List<Long> ids) {
+        Set<Long> distinct = ids.stream().filter(id -> id != null).collect(Collectors.toCollection(LinkedHashSet::new));
+        if (distinct.isEmpty()) {
+            return new LinkedHashSet<>();
+        }
+        List<User> users = userRepository.findAllById(distinct);
+        if (users.size() != distinct.size()) {
+            throw new IllegalArgumentException("One or more selected members do not exist");
+        }
+        return new LinkedHashSet<>(users);
+    }
+
+    /** Replaces the member set; refuses to drop someone who still has unfinished tasks in this project. */
+    private void replaceMembers(Project project, Set<User> newMembers) {
+        Set<Long> newIds = newMembers.stream().map(User::getId).collect(Collectors.toSet());
+
+        List<User> removed = project.getMembers().stream()
+                .filter(member -> !newIds.contains(member.getId()))
+                .toList();
+
+        for (User user : removed) {
+            if (taskRepository.existsByProjectIdAndAssigneeIdAndBoardStatusNot(
+                    project.getId(), user.getId(), BoardStatus.DONE)) {
+                throw new BusinessRuleException(user.getFullName()
+                        + " still has unfinished tasks in this project. Reassign them before removing the member.");
+            }
+        }
+
+        // A removed member also leaves this project's teams.
+        for (Team team : teamRepository.findByProjectId(project.getId())) {
+            for (User user : removed) {
+                teamMemberRepository.findByTeamIdAndUserId(team.getId(), user.getId())
+                        .ifPresent(teamMemberRepository::delete);
+            }
+        }
+
+        project.getMembers().clear();
+        project.getMembers().addAll(newMembers);
+    }
+
+    private ProjectDtos.Detail toDetail(Project project) {
+        List<Task> tasks = new ArrayList<>(taskRepository.findByProjectId(project.getId()));
+        tasks.sort(Comparator.comparing(Task::getId));
+
+        int total = tasks.size();
+        int completed = (int) tasks.stream().filter(t -> t.getBoardStatus() == BoardStatus.DONE).count();
+        int percent = total == 0 ? 0 : Math.round(completed * 100f / total);
+
+        List<ProjectDtos.PersonInfo> members = project.getMembers().stream()
+                .sorted(Comparator.comparing(User::getFullName, String.CASE_INSENSITIVE_ORDER))
+                .map(ProjectDtos.PersonInfo::from)
+                .toList();
+
+        return new ProjectDtos.Detail(
+                project.getId(),
+                project.getName(),
+                project.getCode(),
+                project.getProjectKey(),
+                project.getDescription(),
+                project.getStartDate(),
+                project.getEndDate(),
+                project.getStatus(),
+                project.getPriority(),
+                ProjectDtos.PersonInfo.from(project.getProjectManager()),
+                ProjectDtos.PersonInfo.from(project.getProjectLead()),
+                project.getTeam() == null ? null : project.getTeam().getId(),
+                project.getTeam() == null ? null : project.getTeam().getName(),
+                members,
+                total,
+                completed,
+                percent,
+                tasks.stream().map(TaskDtos.TaskResponse::from).toList(),
+                project.getCreatedAt());
+    }
+
+    private String nextProjectKey(String code, String name) {
+
+        String source = code != null && !code.isBlank() ? code : name;
+
+        String letters = source == null ? "" : source.replaceAll("[^A-Za-z]", "");
+
+        String prefix = (letters + "NEX")
+                .substring(0, Math.min(3, letters.length() + 3))
+                .toUpperCase();
+
+        if (!projectRepository.existsByProjectKeyIgnoreCase(prefix)) {
+            return prefix;
+        }
+
+        for (char suffix = 'A'; suffix <= 'Z'; suffix++) {
+            String candidate = prefix.substring(0, 2) + suffix;
+            if (!projectRepository.existsByProjectKeyIgnoreCase(candidate)) {
+                return candidate;
+            }
+        }
+
+        throw new IllegalStateException("Unable to generate a unique project key");
+    }
+}
+package com.neuroforge.backend.controller;
+
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.DisabledException;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.neuroforge.backend.dto.AuthResponse;
+import com.neuroforge.backend.dto.LoginRequest;
+import com.neuroforge.backend.dto.SignupRequest;
+import com.neuroforge.backend.entity.User;
+import com.neuroforge.backend.security.AuthUser;
+import com.neuroforge.backend.security.CurrentUser;
+import com.neuroforge.backend.security.JwtService;
+import com.neuroforge.backend.service.UserService;
+
+import jakarta.persistence.EntityNotFoundException;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+
+@RestController
+@RequestMapping("/api/auth")
+@RequiredArgsConstructor
+public class AuthController {
+
+    private final UserService userService;
+    private final JwtService jwtService;
+
+    /** POST /api/auth/signup - always creates a DEVELOPER; returns the JWT so the user is logged in. */
+    @PostMapping("/signup")
+    public ResponseEntity<AuthResponse> signup(@Valid @RequestBody SignupRequest request) {
+        User user = userService.register(request);
+        return ResponseEntity.status(HttpStatus.CREATED).body(
+                AuthResponse.of("Account created successfully",
+                        jwtService.generateToken(user), jwtService.getExpirationSeconds(), user));
+    }
+
+    /** POST /api/auth/login - Email or User ID + password. */
+    @PostMapping("/login")
+    public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest request) {
+        User user = userService.authenticate(request.getIdentifier(), request.getPassword());
+        return ResponseEntity.ok(
+                AuthResponse.of("Login successful",
+                        jwtService.generateToken(user), jwtService.getExpirationSeconds(), user));
+    }
+
+    /** GET /api/auth/me - who the current token belongs to (role shown = role enforced = role in the JWT). */
+    @GetMapping("/me")
+    public ResponseEntity<AuthResponse> me() {
+        AuthUser caller = CurrentUser.get();
+        try {
+            User user = userService.getUserById(caller.userId());
+            if (!user.isActive()) {
+                throw new DisabledException("Your account is inactive. Please contact an administrator.");
+            }
+            return ResponseEntity.ok(AuthResponse.me(user, caller.role()));
+        } catch (EntityNotFoundException e) {
+            throw new BadCredentialsException("Account no longer exists");
+        }
+    }
+
+    /** Stateless JWT: nothing to invalidate server side. The frontend just discards the token. */
+    @PostMapping("/logout")
+    public ResponseEntity<Void> logout() {
+        return ResponseEntity.noContent().build();
+    }
+}
+import { useState, useMemo, useEffect } from "react";
+import { useAuth } from "../../context/AuthContext.jsx";
+import { useUsers } from "../../context/UsersContext.jsx";
+import { useProjectTeam } from "../../context/ProjectTeamContext.jsx";
+import { useProjects } from "../../context/ProjectContext.jsx";
+import UserSearch from "../../components/user/UserSearch.jsx";
+import EditUserForm from "../../components/user/EditUserForm.jsx";
+import DeleteUserModal from "../../components/user/DeleteUserModal.jsx";
+import UserAddForm from "../../components/user/UserAddForm.jsx";
+import AssignUserModal from "../../components/user/AssignUserModal.jsx";
+import UserTable from "../../components/user/UserTable.jsx";
+import { ROLES, normalizeRole } from "../../constants/roles.js";
+import { PiPlus, PiUsers, PiUserCheck, PiBriefcase } from "react-icons/pi";
+
+const FILTERABLE_ROLES = [
+  "admin",
+  "project_manager",
+  "project_lead",
+  "team_lead",
+  "developer",
+  "tester",
+  "qa",
+];
+
+const UserManagement = () => {
+  const { currentUser } = useAuth();
+  const {
+    users,
+    updateUser,
+    updateUserStatus,
+    deleteUser,
+    createUser,
+  } = useUsers();
+  const { projectTeams, addProjectMember } = useProjectTeam() || {};
+  const { projects = [] } = useProjects() || {};
+
+  const [editingUser, setEditingUser] = useState(null);
+  const [deletingUser, setDeletingUser] = useState(null);
+  const [showAddUser, setShowAddUser] = useState(false);
+  const [assignModalUser, setAssignModalUser] = useState(null);
+  const [assignModalAssignments, setAssignModalAssignments] = useState([]);
+  const [currentPage, setCurrentPage] = useState(1);
+
+  const [searchTerm, setSearchTerm] = useState("");
+  const [roleFilter, setRoleFilter] = useState("All");
+  const [statusFilter, setStatusFilter] = useState("All");
+  const [assignmentFilter, setAssignmentFilter] = useState("All");
+
+  // Reset pagination to first page when filtering or searching
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, roleFilter, statusFilter, assignmentFilter]);
+
+  const isUserAssigned = (userId) => {
+    // Check ProjectTeam assignments
+    if (projectTeams) {
+      const inTeam = Object.values(projectTeams).some(
+        (members) =>
+          Array.isArray(members) &&
+          members.some((m) => String(m.userId) === String(userId))
+      );
+      if (inTeam) return true;
+    }
+
+    // Check project lead or manager assignments
+    if (Array.isArray(projects)) {
+      return projects.some(
+        (p) =>
+          String(p.projectLeadId) === String(userId) ||
+          String(p.projectManagerId) === String(userId)
+      );
+    }
+
+    return false;
+  };
+
+  const stats = useMemo(() => {
+    const total = users.length;
+    const active = users.filter((u) => (u.status || "Active") === "Active").length;
+    const assigned = users.filter((u) => isUserAssigned(u.id)).length;
+    return { total, active, assigned };
+  }, [users, projectTeams, projects]);
+
+  const isSuperAdmin = normalizeRole(currentUser?.role) === ROLES.ADMIN;
+
+  const filteredUsers = useMemo(() => {
+    return users.filter((user) => {
+      const userStatus = user.status || "Active";
+
+      if (!isSuperAdmin && userStatus === "Inactive") {
+        return false;
+      }
+
+      if (searchTerm.trim()) {
+        const term = searchTerm.toLowerCase();
+
+        const matchesName = (user.fullName || user.name || "")
+          .toLowerCase()
+          .includes(term);
+
+        const matchesEmail = (user.email || "")
+          .toLowerCase()
+          .includes(term);
+
+        const matchesSkill =
+          Array.isArray(user.skills) &&
+          user.skills.some((s) => s.toLowerCase().includes(term));
+
+        if (!matchesName && !matchesEmail && !matchesSkill) {
+          return false;
+        }
+      }
+
+      if (roleFilter !== "All") {
+        if (normalizeRole(user.role) !== normalizeRole(roleFilter)) {
+          return false;
+        }
+      }
+
+      if (statusFilter !== "All") {
+        if (userStatus !== statusFilter) return false;
+      }
+
+      if (assignmentFilter !== "All") {
+        const assigned = isUserAssigned(user.id);
+
+        if (assignmentFilter === "Assigned" && !assigned) return false;
+        if (assignmentFilter === "Unassigned" && assigned) return false;
+      }
+
+      return true;
+    });
+  }, [
+    users,
+    searchTerm,
+    roleFilter,
+    statusFilter,
+    assignmentFilter,
+    isSuperAdmin,
+    projectTeams,
+  ]);
+
+  if (!currentUser) {
+    return <div className="text-slate-500">Loading user...</div>;
+  }
+
+  const handleCreateUser = async (newUser) => {
+    const result = await createUser(newUser);
+
+    if (result.success) {
+      setShowAddUser(false);
+    } else {
+      alert(result.message || "Failed to create user.");
+    }
+  };
+
+  const handleEdit = (user) => setEditingUser(user);
+
+  const handleSaveEdit = async (updated) => {
+    const result = await updateUser(updated, currentUser?.id);
+
+    if (!result.success) {
+      alert(result.message || "Failed to update user.");
+      return;
+    }
+
+    setEditingUser(null);
+  };
+
+  const handleUpdateStatus = async (targetUserId, newStatus) => {
+    if (!updateUserStatus) return;
+
+    const res = await updateUserStatus(
+      targetUserId,
+      newStatus,
+      currentUser?.id
+    );
+
+    if (!res?.success) {
+      alert(res?.message || "Failed to update status.");
+    }
+  };
+
+  const handleDelete = (user) => setDeletingUser(user);
+
+  const handleConfirmDelete = async () => {
+    const result = await deleteUser(deletingUser.id);
+
+    if (!result.success) {
+      alert(result.message || "Failed to delete user.");
+      return;
+    }
+
+    setDeletingUser(null);
+  };
+
+  const handleResetFilters = () => {
+    setSearchTerm("");
+    setRoleFilter("All");
+    setStatusFilter("All");
+    setAssignmentFilter("All");
+  };
+
+  const handleAssignUser = async (projectId, userId, projectRole) => {
+    /* ==========================================================================
+       [BACKEND_INTEGRATION_POINT]
+       Endpoint:    POST http://localhost:8080/api/projects/{projectId}/members
+       Description: Assign user to project team from Admin User Management.
+       Headers:     Authorization: Bearer <jwt-token>, Content-Type: application/json
+       Payload:     { "userId": userId, "projectRole": projectRole, "status": "Active" }
+       Response:    201/200 OK -> { "id": 1, "userId": userId, "projectRole": projectRole }
+       Fallback:    Optimistically updates ProjectTeamContext if backend is offline.
+       ========================================================================== */
+    if (!addProjectMember) return { success: false, message: "Assignment service is not available." };
+    return await addProjectMember(projectId, userId, projectRole);
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
+            User Management & Resource Directory
+          </h1>
+
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            Manage system users, skill profiles based on roles, active status,
+            and project allocations
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setShowAddUser(true)}
+          className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#2563EB] to-[#4F46E5] px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/20 transition hover:brightness-110"
+        >
+          <PiPlus size={18} />
+          <span>Add User</span>
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+            <PiUsers size={16} className="text-blue-500 dark:text-blue-400" />
+            <span>Total Users</span>
+          </div>
+
+          <p className="mt-2 text-2xl font-bold text-slate-900 dark:text-white">
+            {stats.total}
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+            <PiUserCheck size={16} className="text-emerald-500 dark:text-emerald-400" />
+            <span>Active Users</span>
+          </div>
+
+          <p className="mt-2 text-2xl font-bold text-slate-900 dark:text-white">
+            {stats.active}
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+            <PiBriefcase size={16} className="text-indigo-500 dark:text-indigo-400" />
+            <span>Assigned to Projects</span>
+          </div>
+
+          <p className="mt-2 text-2xl font-bold text-slate-900 dark:text-white">
+            {stats.assigned}
+          </p>
+        </div>
+      </div>
+
+      <UserSearch
+        searchTerm={searchTerm}
+        onSearchChange={setSearchTerm}
+        roleFilter={roleFilter}
+        onRoleFilterChange={setRoleFilter}
+        statusFilter={statusFilter}
+        onStatusFilterChange={setStatusFilter}
+        assignmentFilter={assignmentFilter}
+        onAssignmentFilterChange={setAssignmentFilter}
+        roles={FILTERABLE_ROLES}
+        onResetFilters={handleResetFilters}
+      />
+
+      <div>
+        <UserTable
+          users={filteredUsers}
+          onEdit={handleEdit}
+          onDelete={handleDelete}
+          onUpdateStatus={handleUpdateStatus}
+          onOpenAssignModal={(user, currentAssignments) => {
+            setAssignModalUser(user);
+            setAssignModalAssignments(currentAssignments || []);
+          }}
+          currentUserId={currentUser?.id}
+          currentPage={currentPage}
+          setCurrentPage={setCurrentPage}
+        />
+      </div>
+
+      {showAddUser && (
+        <UserAddForm
+          onCancel={() => setShowAddUser(false)}
+          onCreateUser={handleCreateUser}
+        />
+      )}
+
+      {editingUser && (
+        <EditUserForm
+          user={editingUser}
+          currentUserId={currentUser?.id}
+          onCancel={() => setEditingUser(null)}
+          onSave={handleSaveEdit}
+        />
+      )}
+
+      {deletingUser && (
+        <DeleteUserModal
+          user={deletingUser}
+          onCancel={() => setDeletingUser(null)}
+          onConfirm={handleConfirmDelete}
+        />
+      )}
+
+      {assignModalUser && (
+        <AssignUserModal
+          isOpen={Boolean(assignModalUser)}
+          user={assignModalUser}
+          projects={projects}
+          currentAssignments={assignModalAssignments}
+          onAssign={handleAssignUser}
+          onClose={() => {
+            setAssignModalUser(null);
+            setAssignModalAssignments([]);
+          }}
+        />
+      )}
+    </div>
+  );
+};
+
+export default UserManagement;import { useState } from "react";
+import { PiX, PiFolder, PiBriefcase, PiUserPlus } from "react-icons/pi";
+
+const PROJECT_ROLES = [
+  "Developer",
+  "Team Lead",
+  "Project Lead",
+  "Project Manager",
+  "Tester",
+  "QA",
+];
+
+const AssignUserModal = ({
+  isOpen,
+  onClose,
+  user,
+  projects = [],
+  currentAssignments = [],
+  onAssign,
+}) => {
+  const [selectedProjectId, setSelectedProjectId] = useState(
+    projects.length > 0 ? String(projects[0].id) : ""
+  );
+  const [selectedRole, setSelectedRole] = useState("Developer");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  if (!isOpen || !user) return null;
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!selectedProjectId) {
+      setError("Please select a project.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError("");
+
+    try {
+      /* ==========================================================================
+         [BACKEND_INTEGRATION_POINT]
+         Endpoint:    POST http://localhost:8080/api/projects/{projectId}/members
+         Description: Assign user to a project with a specified role from Admin User Management.
+         Headers:     Authorization: Bearer <jwt-token>, Content-Type: application/json
+         Payload:     { "userId": user.id, "projectRole": selectedRole, "status": "Active" }
+         Response:    201/200 OK -> { "id": 1, "userId": user.id, "projectRole": selectedRole }
+         Fallback:    Hydrates into local ProjectTeamContext state if backend is offline.
+         ========================================================================== */
+      const result = await onAssign(selectedProjectId, user.id, selectedRole);
+      if (result?.success) {
+        onClose();
+      } else {
+        setError(result?.message || "Failed to assign user to project.");
+      }
+    } catch (err) {
+      setError(err?.message || "An error occurred while assigning user.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs transition-opacity animate-in fade-in">
+      <div className="relative w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900 transition-colors">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
+          <div className="flex items-center gap-3">
+            <div className="rounded-xl bg-blue-500/10 p-2.5 text-blue-600 dark:text-blue-400">
+              <PiUserPlus size={22} />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+                Assign User to Project
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Allocate {user.fullName || user.name} to an active project
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-white transition"
+          >
+            <PiX size={18} />
+          </button>
+        </div>
+
+        {/* Form */}
+        <form onSubmit={handleSubmit} className="mt-5 space-y-4">
+          {error && (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-600 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-400">
+              {error}
+            </div>
+          )}
+
+          {/* User Info Pill */}
+          <div className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/60">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 font-bold text-white text-xs">
+                {(user.fullName || user.name || "U").charAt(0).toUpperCase()}
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-slate-900 dark:text-white">
+                  {user.fullName || user.name}
+                </p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  {user.email}
+                </p>
+              </div>
+            </div>
+            <span className="rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+              System Role: {user.role || "Member"}
+            </span>
+          </div>
+
+          {/* Current Allocations (if any) */}
+          {currentAssignments.length > 0 && (
+            <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-3 dark:border-blue-900/30 dark:bg-blue-950/20">
+              <p className="text-[11px] font-semibold text-blue-800 dark:text-blue-300 uppercase tracking-wider mb-1.5">
+                Current Active Allocations:
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {currentAssignments.map((a) => (
+                  <span
+                    key={a.projectId}
+                    className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-white px-2 py-0.5 text-xs text-blue-700 dark:border-blue-800 dark:bg-slate-800 dark:text-blue-300"
+                  >
+                    <PiFolder size={12} />
+                    {a.projectName} ({a.role})
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Project Selection */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+              Target Project <span className="text-rose-500">*</span>
+            </label>
+            <select
+              value={selectedProjectId}
+              onChange={(e) => setSelectedProjectId(e.target.value)}
+              required
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+            >
+              {projects.map((proj) => (
+                <option key={proj.id} value={proj.id} className="dark:bg-slate-800 dark:text-white">
+                  {proj.name} {proj.code ? `(${proj.code})` : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Project Role Selection */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+              Assigned Project Role <span className="text-rose-500">*</span>
+            </label>
+            <select
+              value={selectedRole}
+              onChange={(e) => setSelectedRole(e.target.value)}
+              required
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+            >
+              {PROJECT_ROLES.map((r) => (
+                <option key={r} value={r} className="dark:bg-slate-800 dark:text-white">
+                  {r}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Actions */}
+          <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 transition"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={isSubmitting || !selectedProjectId}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-md shadow-blue-500/20 transition hover:brightness-110 disabled:opacity-50"
+            >
+              <PiBriefcase size={15} />
+              <span>{isSubmitting ? "Assigning..." : "Assign to Project"}</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+export default AssignUserModal;
+import { useState } from "react";
+import { PiX, PiPlus, PiCheckCircle, PiXCircle } from "react-icons/pi";
+import {
+  ROLE_DEFAULT_SKILLS,
+  normalizeUserRole,
+} from "../../context/UsersContext.jsx";
+import { formatRole } from "../../constants/roles.js";
+
+const AVAILABLE_ROLES = [
+  "admin",
+  "project_manager",
+  "project_lead",
+  "team_lead",
+  "developer",
+  "tester",
+  "qa",
+];
+
+const UserAddForm = ({ onCancel, onCreateUser }) => {
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState("developer");
+  const [status, setStatus] = useState("Active");
+  const [skills, setSkills] = useState(
+    ROLE_DEFAULT_SKILLS.developer || []
+  );
+  const [newSkillInput, setNewSkillInput] = useState("");
+
+  const roleKey = normalizeUserRole(role);
+  const suggestedSkills = ROLE_DEFAULT_SKILLS[roleKey] || [];
+
+  const handleRoleChange = (newRole) => {
+    setRole(newRole);
+    const newRoleKey = normalizeUserRole(newRole);
+    const defaults = ROLE_DEFAULT_SKILLS[newRoleKey] || [];
+    setSkills(defaults);
+  };
+
+  const handleAddSkill = (skillToAdd) => {
+    const trimmed = (skillToAdd || newSkillInput).trim();
+
+    if (!trimmed) return;
+
+    if (!skills.includes(trimmed)) {
+      setSkills([...skills, trimmed]);
+    }
+
+    setNewSkillInput("");
+  };
+
+  const handleRemoveSkill = (skillToRemove) => {
+    setSkills(skills.filter((s) => s !== skillToRemove));
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+
+    if (!fullName.trim()) {
+      alert("Please enter a user full name.");
+      return;
+    }
+
+    if (!email.trim()) {
+      alert("Please enter an email address.");
+      return;
+    }
+
+    const newUser = {
+      fullName: fullName.trim(),
+      name: fullName.trim(),
+      email: email.trim(),
+      role,
+      status,
+      skills,
+    };
+
+    onCreateUser(newUser);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#172033]/60 p-4 backdrop-blur-sm">
+      <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+        <div className="mb-6 flex items-start justify-between">
+          <div>
+            <h2 className="text-xl font-bold text-slate-900 dark:text-white">
+              Add New User
+            </h2>
+
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+              Create a new user account with role-based skills and active
+              status
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-white"
+          >
+            <PiX size={20} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <div>
+            <label
+              htmlFor="add-name"
+              className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300"
+            >
+              Full Name
+            </label>
+
+            <input
+              id="add-name"
+              type="text"
+              placeholder="e.g. Rachel Adams"
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              required
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 outline-none transition focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/15 dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:placeholder:text-slate-500 dark:focus:border-blue-400"
+            />
+          </div>
+
+          <div>
+            <label
+              htmlFor="add-email"
+              className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300"
+            >
+              Email Address
+            </label>
+
+            <input
+              id="add-email"
+              type="email"
+              placeholder="e.g. rachel.adams@neuroforge.io"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 outline-none transition focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/15 dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:placeholder:text-slate-500 dark:focus:border-blue-400"
+            />
+          </div>
+
+          <div>
+            <label
+              htmlFor="add-role"
+              className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300"
+            >
+              System Role
+            </label>
+
+            <select
+              id="add-role"
+              value={role}
+              onChange={(e) => handleRoleChange(e.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-800 outline-none transition focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/15 dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:focus:border-blue-400"
+            >
+              {AVAILABLE_ROLES.map((r) => (
+                <option key={r} value={r} className="dark:bg-slate-800 dark:text-white">
+                  {formatRole(r)}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+              Active Status
+            </label>
+
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setStatus("Active")}
+                className={`flex items-center justify-center gap-2 rounded-xl border p-3 text-sm font-semibold transition ${
+                  status === "Active"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-700 shadow-sm dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-300"
+                    : "border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-800 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white"
+                }`}
+              >
+                <PiCheckCircle
+                  size={18}
+                  className={
+                    status === "Active"
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : "text-slate-400"
+                  }
+                />
+                <span>Active</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setStatus("Inactive")}
+                className={`flex items-center justify-center gap-2 rounded-xl border p-3 text-sm font-semibold transition ${
+                  status === "Inactive"
+                    ? "border-slate-300 bg-slate-100 text-slate-700 shadow-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+                    : "border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-800 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white"
+                }`}
+              >
+                <PiXCircle
+                  size={18}
+                  className="text-slate-400"
+                />
+                <span>Inactive</span>
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <div className="mb-1.5 flex items-center justify-between">
+              <label className="text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+                Skills & Responsibilities
+              </label>
+
+              <span className="text-xs text-slate-500 dark:text-slate-400">
+                {skills.length} skills selected
+              </span>
+            </div>
+
+            <div className="mb-3 flex min-h-[36px] flex-wrap gap-1.5 rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800/50">
+              {skills.map((skill) => (
+                <span
+                  key={skill}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700 dark:border-blue-800/60 dark:bg-blue-950/40 dark:text-blue-300"
+                >
+                  {skill}
+
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveSkill(skill)}
+                    className="rounded text-blue-500 transition hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200"
+                  >
+                    <PiX size={13} />
+                  </button>
+                </span>
+              ))}
+
+              {skills.length === 0 && (
+                <span className="py-1 text-xs italic text-slate-400 dark:text-slate-500">
+                  No skills selected yet.
+                </span>
+              )}
+            </div>
+
+            <div className="mb-3 flex gap-2">
+              <input
+                type="text"
+                placeholder="Add custom skill..."
+                value={newSkillInput}
+                onChange={(e) => setNewSkillInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleAddSkill();
+                  }
+                }}
+                className="flex-1 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs text-slate-800 placeholder:text-slate-400 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:placeholder:text-slate-500"
+              />
+
+              <button
+                type="button"
+                onClick={() => handleAddSkill()}
+                className="inline-flex items-center gap-1 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 transition hover:bg-blue-100 dark:border-blue-800/60 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-900/40"
+              >
+                <PiPlus size={14} />
+                <span>Add</span>
+              </button>
+            </div>
+
+            {suggestedSkills.length > 0 && (
+              <div>
+                <p className="mb-1.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                  Recommended for {formatRole(role)}:
+                </p>
+
+                <div className="flex flex-wrap gap-1.5">
+                  {suggestedSkills.map((suggested) => {
+                    const isSelected = skills.includes(suggested);
+
+                    return (
+                      <button
+                        key={suggested}
+                        type="button"
+                        onClick={() =>
+                          isSelected
+                            ? handleRemoveSkill(suggested)
+                            : handleAddSkill(suggested)
+                        }
+                        className={`rounded-lg border px-2 py-0.5 text-xs font-medium transition ${
+                          isSelected
+                            ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-300"
+                            : "border-slate-200 bg-slate-50 text-slate-600 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-blue-500 dark:hover:bg-blue-950/40 dark:hover:text-blue-300"
+                        }`}
+                      >
+                        {isSelected ? `✓ ${suggested}` : `+ ${suggested}`}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="flex justify-end gap-3 border-t border-slate-200 pt-3 dark:border-slate-800">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white"
+            >
+              Cancel
+            </button>
+
+            <button
+              type="submit"
+              className="rounded-xl bg-gradient-to-r from-[#2563EB] to-[#4F46E5] px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/20 transition hover:brightness-110"
+            >
+              Create User
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+export default UserAddForm;

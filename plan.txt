@@ -1,0 +1,244 @@
+# NeuroForge Nexus — Backend Implementation Plan
+
+## Role model
+
+| Role | Scope | Core backend responsibilities |
+|---|---|---|
+| Admin | Global | Users, roles, projects, teams, tasks, sprints, board, dependencies |
+| Project Manager | Managed/member projects | Create/manage projects, team assignment, tasks, sprints, dependencies |
+| Project Lead | Led/member projects | Project/team/task/subtask management within led projects |
+| Team Lead | Assigned project teams | Team/member operations, task/subtask coordination, board movement |
+| Developer | Assigned projects / own tasks | View assigned project work, update own task/subtask progress |
+| Tester | Assigned projects / own tasks | View assigned project work, update own task/subtask progress |
+| QA | Assigned projects / own tasks | View assigned project work, update own task/subtask progress |
+
+## Execution order
+
+1. **Database foundation** — normalize users and roles, add project lead/team ownership, persistent project member assignments, teams, sprints/tasks/board state, and subtasks.
+2. **Authentication/RBAC** — make role resolution server-side and ignore privileged role claims during self-registration.
+3. **Project access** — enforce project manager/lead/team-lead/member scopes in backend services.
+4. **Teams and project members** — persist team/member assignments and project roles instead of browser-only state.
+5. **Task/subtask operations** — enforce create/edit/delete/status/assignment rules and project membership.
+6. **Sprint/Kanban/dependency operations** — apply the same server-side scopes to boards, sprints, blocking, and dependencies.
+7. **Dashboard/My Work** — return role-scoped data and assignment-specific task views.
+8. **Frontend contract alignment** — remove stale role constants/local-only team/task state and call backend endpoints.
+9. **Validation** — compile/static validation, source consistency checks, and package the completed source ZIP.
+
+## Database setup
+
+Run `database/neuroforge_backend_setup.sql` once against MySQL 8.x. Then configure `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `JWT_SECRET`, and the bootstrap admin environment variables before starting Spring Boot.
+
+## Verification
+
+This environment does not expose the user's local MySQL service and does not provide a complete Maven/npm toolchain, so the ZIP includes the complete source changes and database migration, while final live DB/browser integration must be run on the user's development machine.
+# Backend Integration Guide & Endpoint Reference
+
+This guide provides the backend team with exact specifications for all REST endpoints required by the frontend, complete with payload schemas, response structures, cURL testing commands, and automated instructions to clean up integration comments once backend integration is finalized.
+
+---
+
+## 🚀 Quick Start for Team Members Pulling the Frontend
+
+To ensure a smooth setup without any issues:
+
+1. **Pull the latest code**:
+   ```bash
+   git checkout feature/ui-and-feature-advancement
+   git pull origin feature/ui-and-feature-advancement
+   ```
+2. **Navigate to the frontend directory**:
+   ```bash
+   cd frontend
+   ```
+3. **Install dependencies**:
+   ```bash
+   npm install
+   ```
+4. **Start the development server**:
+   ```bash
+   npm run dev
+   ```
+   The frontend runs on `http://localhost:5173`.
+5. **Verify production build anytime**:
+   ```bash
+   npm run build
+   ```
+
+> **Note**: The frontend connects to the Spring Boot backend at `http://localhost:8080/api`. If the backend is offline or an endpoint is not yet implemented, the frontend handles network errors gracefully without crashing the UI.
+
+---
+
+## 📌 Endpoint Reference & Integration Points
+
+All 30 backend integration points in the frontend codebase are marked with:
+```javascript
+/* ==========================================================================
+   [BACKEND_INTEGRATION_POINT]
+   Endpoint:    <METHOD> <URL>
+   Description: <Summary of functionality>
+   Headers:     ...
+   Payload:     ...
+   Response:    ...
+   cURL:        ...
+   ========================================================================== */
+```
+
+### 1. Authentication & Session (`AuthContext.jsx`)
+
+Base URL: `http://localhost:8080/api/auth`
+
+| Method | Endpoint | Description | Request Body | Expected Response |
+| :--- | :--- | :--- | :--- | :--- |
+| `GET` | `/me` | Fetch authenticated user | *None* (Bearer Token) | `200 OK` `{ "id": 1, "fullName": "...", "email": "...", "role": "ADMIN", "status": "Active" }` |
+| `POST` | `/signup` | Register new user | `{ "fullName": "...", "email": "...", "password": "...", "confirmPassword": "..." }` | `201 Created` `{ "token": "jwt...", "id": 12, "fullName": "...", "email": "...", "role": "DEVELOPER" }` |
+| `POST` | `/login` | Authenticate credentials | `{ "identifier": "...", "email": "...", "password": "..." }` | `200 OK` `{ "token": "jwt...", "id": 1, "fullName": "...", "email": "...", "role": "ADMIN" }` |
+| `POST` | `/logout` | Invalidate token/session | *None* (Bearer Token) | `200 OK` / `204 No Content` |
+| `DELETE` | `/api/users/me` | Self-service account delete | *None* (Bearer Token) | `200 OK` / `204 No Content` |
+
+#### cURL Examples:
+```bash
+# Login
+curl -X POST http://localhost:8080/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@example.com","password":"Password123!"}'
+
+# Get Current User Profile
+curl -X GET http://localhost:8080/api/auth/me \
+  -H "Authorization: Bearer <YOUR_TOKEN>"
+```
+
+---
+
+### 2. Project Management (`ProjectContext.jsx`)
+
+Base URL: `http://localhost:8080/api/projects`
+
+| Method | Endpoint | Description | Request Body | Expected Response |
+| :--- | :--- | :--- | :--- | :--- |
+| `GET` | `/` | List all accessible projects | *None* | `200 OK` `[ { "id": 1, "name": "App Alpha", "code": "ALP-01", "status": "In Progress", ... } ]` |
+| `POST` | `/` | Create a new project | `{ "name": "...", "code": "...", "description": "...", "projectLeadId": 2, "projectManagerId": 3, "teamId": 1, "status": "Not Started" }` | `201 Created` `{ "id": 5, ... }` |
+| `PUT` | `/{id}` | Full update of project | `{ "name": "...", "description": "...", "code": "...", "status": "..." }` | `200 OK` `{ "id": 1, ... }` |
+| `PATCH` | `/{id}/status` | Update project status only | `{ "status": "In Progress" }` | `200 OK` `{ "id": 1, "status": "In Progress" }` |
+| `DELETE` | `/{id}` | Delete project & cascade | *None* | `200 OK` / `204 No Content` |
+
+> **Important**: The frontend expects `PATCH /api/projects/{id}/status`. If this endpoint is missing (404), the frontend automatically falls back to `PUT /api/projects/{id}`. Implementing the `PATCH` endpoint in Spring Boot improves efficiency:
+> ```java
+> @PatchMapping("/{id}/status")
+> public ResponseEntity<ProjectDto> updateStatus(@PathVariable Long id, @RequestBody Map<String, String> body) {
+>     return ResponseEntity.ok(projectService.updateStatus(id, body.get("status")));
+> }
+> ```
+
+---
+
+### 3. Tasks & Subtasks (`TasksContext.jsx`)
+
+Base URL: `http://localhost:8080/api/tasks` and `http://localhost:8080/api/subtasks`
+
+| Method | Endpoint | Description | Request Body | Expected Response |
+| :--- | :--- | :--- | :--- | :--- |
+| `GET` | `/api/tasks` | Get all tasks | *None* | `200 OK` `[ { "id": 1, "title": "...", "projectId": 2, "assigneeId": 3, "status": "To Do", "priority": "High" } ]` |
+| `GET` | `/api/tasks/{taskId}/subtasks` | Get subtasks for parent task | *None* | `200 OK` `[ { "id": 101, "taskId": 1, "title": "...", "status": "To Do" } ]` |
+| `POST` | `/api/tasks` | Create parent task | `{ "title": "...", "description": "...", "projectId": 1, "assigneeId": 2, "status": "To Do", "priority": "High", "dueDate": "2026-10-20" }` | `201 Created` `{ "id": 10, ... }` |
+| `PATCH` | `/api/tasks/{taskId}/status` | Update task status (Used by execution roles & Kanban) | `{ "status": "In Progress" }` | `200 OK` `{ "id": 1, "status": "In Progress" }` |
+| `PUT` | `/api/tasks/{id}` | Full update (Admin / Project Manager) | Full task payload | `200 OK` `{ "id": 1, ... }` |
+| `DELETE` | `/api/tasks/{taskId}` | Delete parent task | *None* | `200 OK` / `204 No Content` |
+| `POST` | `/api/tasks/{taskId}/subtasks` | Create subtask under task | `{ "title": "...", "assigneeId": 4, "teamId": 1, "status": "To Do", "priority": "Medium" }` | `201 Created` `{ "id": 201, ... }` |
+| `PATCH` | `/api/subtasks/{subtaskId}/status` | Update subtask status | `{ "status": "In Progress" }` | `200 OK` `{ "id": 201, "status": "In Progress" }` |
+| `PUT` | `/api/subtasks/{subtaskId}` | Full update of subtask | `{ "title": "...", "assigneeId": 4, "status": "To Do", ... }` | `200 OK` `{ "id": 201, ... }` |
+| `DELETE` | `/api/subtasks/{subtaskId}` | Delete subtask | *None* | `200 OK` / `204 No Content` |
+
+#### Supported Subtask Statuses:
+The backend should support the following status strings:
+- `"To Do"`
+- `"In Progress"`
+- `"In Review"`
+- `"Ready for Testing"`
+- `"In Testing"`
+- `"In QA"`
+- `"Done"`
+
+---
+
+### 4. User Directory & Roles (`UsersContext.jsx`)
+
+Base URL: `http://localhost:8080/api/users`
+
+| Method | Endpoint | Description | Request Body | Expected Response |
+| :--- | :--- | :--- | :--- | :--- |
+| `GET` | `/` | All users (Admin only) | *None* | `200 OK` `[ { "id": 1, "fullName": "...", "email": "...", "role": "ADMIN", "status": "Active" } ]` |
+| `GET` | `/options` | Assignable users (Managers/Leads) | *None* | `200 OK` `[ { "id": 2, "fullName": "...", "role": "DEVELOPER" } ]` |
+| `POST` | `/` | Admin create user | `{ "fullName": "...", "email": "...", "password": "...", "role": "DEVELOPER", "status": "Active" }` | `201 Created` `{ "id": 15, ... }` |
+| `PUT` | `/{id}` | Update user details | `{ "fullName": "...", "email": "..." }` | `200 OK` `{ "id": 15, ... }` |
+| `PATCH` | `/{id}/role` | Update user role | `{ "role": "TEAM_LEAD" }` | `200 OK` `{ "id": 15, "role": "TEAM_LEAD" }` |
+| `PATCH` | `/{id}/status` | Update active status | `{ "status": "In Meeting" }` | `200 OK` `{ "id": 15, "status": "In Meeting" }` |
+| `GET` | `/{id}/profile` | Comprehensive profile (assigned projects, teams, tasks) | *None* | `200 OK` `{ "id": 1, "fullName": "...", "projects": [...], "teams": [...], "assignedTasks": [...] }` |
+| `DELETE` | `/{id}` | Delete user (Admin only) | *None* | `200 OK` / `204 No Content` |
+
+---
+
+### 5. Teams & Memberships (`TeamsContext.jsx` & `ProjectTeamContext.jsx`)
+
+Base URL: `http://localhost:8080/api/teams` and `http://localhost:8080/api/projects`
+
+| Method | Endpoint | Description | Request Body | Expected Response |
+| :--- | :--- | :--- | :--- | :--- |
+| `GET` | `/api/teams` | List organizational teams | *None* | `200 OK` `[ { "id": 1, "name": "Frontend Squad" } ]` |
+| `GET` | `/api/teams/{id}/members` | List members of a team | *None* | `200 OK` `[ { "id": 1, "fullName": "Alice" } ]` |
+| `POST` | `/api/teams` | Create organizational team | `{ "name": "...", "description": "..." }` | `201 Created` `{ "id": 2, ... }` |
+| `PUT` | `/api/teams/{id}` | Update team | `{ "name": "...", "description": "..." }` | `200 OK` `{ "id": 2, ... }` |
+| `DELETE` | `/api/teams/{id}` | Delete team | *None* | `200 OK` / `204 No Content` |
+| `GET` | `/api/projects/{projectId}/members` | Project team members | *None* | `200 OK` `[ { "id": 1, "userId": 2, "projectRole": "Developer", "status": "Active" } ]` |
+| `POST` | `/api/projects/{projectId}/members` | Add member to project | `{ "userId": 2, "projectRole": "Developer", "status": "Active" }` | `201 Created` `{ "id": 1, ... }` |
+| `PUT` | `/api/projects/{projectId}/members/{userId}` | Update project role | `{ "userId": 2, "projectRole": "Team Lead" }` | `200 OK` `{ "id": 1, ... }` |
+| `PATCH` | `/api/projects/{projectId}/members/{userId}/status` | Update member status | `{ "status": "In Meeting" }` | `200 OK` `{ "id": 1, "status": "In Meeting" }` |
+| `DELETE` | `/api/projects/{projectId}/members/{userId}` | Remove member from project | *None* | `200 OK` / `204 No Content` |
+
+---
+
+### 6. AI Chatbot Assistant (`Chatbot.jsx`)
+
+Base URL: `http://localhost:8080/api/chat`
+
+| Method | Endpoint | Description | Request Body | Expected Response |
+| :--- | :--- | :--- | :--- | :--- |
+| `POST` | `/api/chat` | AI query assistant for projects, tasks & calendar | `{ "message": "What projects are in progress?", "history": [ { "role": "user", "content": "..." } ] }` | `200 OK` `{ "reply": "There are 2 projects currently in progress: App Alpha and Portal Beta." }` |
+
+> **Graceful Fallback**: If `/api/chat` is not implemented or returns an HTTP error, the frontend automatically falls back to its built-in rule-based intent analyzer and local calendar scheduler (`buildReply`), ensuring zero disruption to the user experience.
+
+#### cURL Example:
+```bash
+curl -X POST http://localhost:8080/api/chat \
+  -H "Authorization: Bearer <YOUR_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"message":"What are my tasks for today?","history":[]}'
+```
+
+---
+
+## 🧹 How to Remove Integration Comments
+
+Once backend implementation is finished, remove all `[BACKEND_INTEGRATION_POINT]` comments across the frontend codebase using any of the following methods:
+
+### Option 1: Via npm script (Recommended)
+From the `frontend/` directory, run:
+```bash
+npm run clean:comments
+```
+
+### Option 2: Via PowerShell (Windows)
+Run this single command in PowerShell from the repository root:
+```powershell
+Get-ChildItem -Path frontend/src -Recurse -Filter *.jsx | ForEach-Object { (Get-Content $_.FullName -Raw) -replace '(?s)/\* =+[\r\n\s]+\[BACKEND_INTEGRATION_POINT\].*?=+\s*\*/[\r\n]*', '' | Set-Content $_.FullName }
+```
+
+### Option 3: Via Bash (Linux / macOS)
+Run this single command in Bash from the repository root:
+```bash
+node scripts/clean-integration-comments.js
+```
+
+After running the clean command, verify that the frontend builds without any errors:
+```bash
+npm run build
+```

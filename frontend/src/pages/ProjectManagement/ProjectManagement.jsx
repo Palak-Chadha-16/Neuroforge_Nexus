@@ -570,7 +570,6 @@ const ProjectManagement = () => {
                   <th className="px-6 py-3.5">Code</th>
                   <th className="px-6 py-3.5">Project Lead</th>
                   <th className="px-6 py-3.5">Project Manager</th>
-                  <th className="px-6 py-3.5">Team</th>
                   <th className="px-6 py-3.5">Repository</th>
                   <th className="px-6 py-3.5">Status</th>
                   {showActions && (
@@ -612,19 +611,6 @@ const ProjectManagement = () => {
 
                     <td className="px-6 py-4 text-xs font-medium text-slate-700 dark:text-slate-300">
                       {project.projectManager?.fullName || "—"}
-                    </td>
-
-                    <td className="px-6 py-4 text-xs">
-                      {project.teamName ? (
-                        <div>
-                          <span className="font-medium text-slate-700 dark:text-slate-300">{project.teamName}</span>
-                          <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-                            ID {project.teamId} &ndash; {project.teamMemberCount ?? 0} {(project.teamMemberCount ?? 0) === 1 ? "member" : "members"}
-                          </p>
-                        </div>
-                      ) : (
-                        <span className="text-slate-400 dark:text-slate-500">No team</span>
-                      )}
                     </td>
 
                     <td className="px-6 py-4" onClick={(event) => event.stopPropagation()}>
