@@ -13,6 +13,7 @@ export const usePermission = () => {
     if (!currentUser) return false;
     const hasPerm = hasRolePermission(role, permission);
     if (!hasPerm) return false;
+    if (role === ROLES.ADMIN) return true;
 
     if (typeof scopeCheck === "function") {
       return Boolean(scopeCheck(currentUser));

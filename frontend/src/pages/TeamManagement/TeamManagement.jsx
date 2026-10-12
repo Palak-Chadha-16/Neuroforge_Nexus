@@ -50,33 +50,67 @@ const TeamManagement = () => {
   const [editingTeamId, setEditingTeamId] = useState(null);
   const [editingTeamName, setEditingTeamName] = useState("");
 
-  const manageableProjects = projects.filter((project) =>
-    normalizeRole(currentUser?.role) === ROLES.ADMIN ||
-    String(project.projectManager?.id ?? project.projectManagerId) === String(currentUser?.id)
-  );
-  const manageableTeams = teams.filter((team) =>
-    normalizeRole(currentUser?.role) === ROLES.ADMIN ||
-    manageableProjects.some((project) => String(project.id) === String(team.projectId))
-  );
+  const manageableProjects = projects.filter((project) => {
+    const role = normalizeRole(currentUser?.role);
+    if (role === ROLES.ADMIN) return true;
+    if (role === ROLES.PROJECT_MANAGER) {
+      return String(project.projectManager?.id ?? project.projectManagerId ?? project.managerId) === String(currentUser?.id);
+    }
+    if (role === ROLES.PROJECT_LEAD) {
+      return String(project.projectLead?.id ?? project.projectLeadId ?? project.leadId) === String(currentUser?.id);
+    }
+    if (role === ROLES.TEAM_LEAD) {
+      return (
+        String(project.team?.leadId) === String(currentUser?.id) ||
+        (project.members || []).some(
+          (m) => String(m.id ?? m.userId) === String(currentUser?.id) && m.projectRole === "Team Lead"
+        )
+      );
+    }
+    return false;
+  });
+
+  const manageableTeams = teams.filter((team) => {
+    const role = normalizeRole(currentUser?.role);
+    if (role === ROLES.ADMIN) return true;
+    if (role === ROLES.TEAM_LEAD) {
+      return (
+        String(team.teamLeadId) === String(currentUser?.id) ||
+        (team.members || []).some(
+          (m) => String(m.userId) === String(currentUser?.id) && m.teamRole === "Team Lead"
+        ) ||
+        manageableProjects.some((project) => String(project.id) === String(team.projectId))
+      );
+    }
+    return manageableProjects.some((project) => String(project.id) === String(team.projectId));
+  });
+
   const visibleActiveTeamId = activeTeamId ?? manageableTeams[0]?.id ?? null;
   const visibleActiveTeam = manageableTeams.find(
     (team) => String(team.id) === String(visibleActiveTeamId)
   );
   const activeTeam = visibleActiveTeam;
-  const assignableUsers = users.filter((user) =>
-    user.active !== false &&
-    user.status !== "Inactive" &&
-    SYSTEM_ROLE_BY_TEAM_ROLE[teamRole]?.includes(normalizeRole(user.role)) &&
-    !(visibleActiveTeam?.members || []).some((member) => String(member.userId) === String(user.id)) &&
-    !(teamRole === "Team Lead" && teams.some((team) =>
-      String(team.projectId) === String(visibleActiveTeam?.projectId) &&
-      String(team.id) !== String(visibleActiveTeam?.id) &&
-      (team.members || []).some((member) =>
-        String(member.userId) === String(user.id) &&
-        member.teamRole === "Team Lead"
-      )
-    ))
-  );
+
+  const projectHasTeamLead =
+    (visibleActiveTeam?.members || []).some((m) => m.teamRole === "Team Lead") ||
+    visibleActiveTeam?.teamLeadId != null ||
+    teams.some(
+      (team) =>
+        String(team.projectId) === String(visibleActiveTeam?.projectId) &&
+        ((team.members || []).some((m) => m.teamRole === "Team Lead") || team.teamLeadId != null)
+    );
+
+  const assignableUsers = users.filter((user) => {
+    if (user.active === false || user.status === "Inactive") return false;
+    if (teamRole === "Team Lead" && projectHasTeamLead) return false;
+    const allowedRoles = SYSTEM_ROLE_BY_TEAM_ROLE[teamRole] || [];
+    if (!allowedRoles.includes(normalizeRole(user.role))) return false;
+    const isAlreadyMember = (visibleActiveTeam?.members || []).some(
+      (m) => String(m.userId) === String(user.id)
+    );
+    if (isAlreadyMember) return false;
+    return true;
+  });
 
   const handleCreateTeam = async (e) => {
     e.preventDefault();
@@ -396,7 +430,9 @@ const TeamManagement = () => {
                     : usersError
                       ? "Users could not be loaded"
                       : assignableUsers.length === 0
-                        ? "No eligible users"
+                        ? teamRole === "Team Lead" && projectHasTeamLead
+                          ? "Project already has a Team Lead"
+                          : "No eligible users"
                         : "Select user"}
                 </option>
 
@@ -431,7 +467,9 @@ const TeamManagement = () => {
                 </div>
               ) : assignableUsers.length === 0 && !usersLoading ? (
                 <p className="w-full text-xs text-slate-600">
-                  No eligible active users are available for this team role.
+                  {teamRole === "Team Lead" && projectHasTeamLead
+                    ? "This project already has a Team Lead."
+                    : "No eligible active users are available for this team role."}
                 </p>
               ) : null}
 

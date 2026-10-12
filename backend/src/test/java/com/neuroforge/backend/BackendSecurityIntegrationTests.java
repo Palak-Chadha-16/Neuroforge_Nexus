@@ -731,6 +731,182 @@ class BackendSecurityIntegrationTests {
                 .andExpect(jsonPath("$[0].projectRole").value("Tester"));
     }
 
+    @Test
+    void adminCanManageProjectAndTeamTheyDoNotOwn() throws Exception {
+        // Setup: projectOwner owns a project; admin does not own it
+        User projectOwner = createUser(Role.PROJECT_MANAGER);
+        User admin = createUser(Role.ADMIN);
+        User teamLead = createUser(Role.TEAM_LEAD);
+        User developer = createUser(Role.DEVELOPER);
+        String adminToken = jwtService.generateToken(admin);
+
+        // Owner creates the project
+        String projectBody = mockMvc.perform(post("/api/projects")
+                        .header("Authorization", "Bearer " + jwtService.generateToken(projectOwner))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"Admin cross-project %s","projectManagerId":%d}
+                                """.formatted(UUID.randomUUID(), projectOwner.getId())))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long projectId = objectMapper.readTree(projectBody).get("id").asLong();
+
+        // Admin can view it
+        mockMvc.perform(get("/api/projects/{id}", projectId)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+
+        // Admin can update it (even though they are not the owner)
+        mockMvc.perform(put("/api/projects/{id}", projectId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"Admin updated cross-project"}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Admin updated cross-project"));
+
+        // Admin can create a team for a project they don't own
+        String teamBody = mockMvc.perform(post("/api/teams")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"projectId":%d,"name":"Admin cross team"}
+                                """.formatted(projectId)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long teamId = objectMapper.readTree(teamBody).get("id").asLong();
+
+        // Admin can add a team lead to the team
+        mockMvc.perform(post("/api/teams/{teamId}/members", teamId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"userId":%d,"teamRole":"Team Lead"}
+                                """.formatted(teamLead.getId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.teamRole").value("Team Lead"));
+
+        // Admin can add a developer
+        mockMvc.perform(post("/api/teams/{teamId}/members", teamId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"userId":%d,"teamRole":"Developer"}
+                                """.formatted(developer.getId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.teamRole").value("Developer"));
+
+        // Duplicate member rejection
+        mockMvc.perform(post("/api/teams/{teamId}/members", teamId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"userId":%d,"teamRole":"Developer"}
+                                """.formatted(developer.getId())))
+                .andExpect(status().isConflict());
+
+        // Invalid team role (mismatched system role — developer cannot be Team Lead)
+        mockMvc.perform(post("/api/teams/{teamId}/members", teamId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"userId":%d,"teamRole":"Team Lead"}
+                                """.formatted(developer.getId())))
+                .andExpect(status().isConflict());
+
+        // updateMemberRole persists change
+        mockMvc.perform(put("/api/teams/{teamId}/members/{userId}", teamId, teamLead.getId())
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"teamRole":"Team Lead"}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.teamRole").value("Team Lead"));
+
+        // Verify persistence after retrieval
+        mockMvc.perform(get("/api/teams/{teamId}/members", teamId)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[*].teamRole", org.hamcrest.Matchers.hasItems("Team Lead", "Developer")));
+
+        // Verify project assignments were created
+        org.assertj.core.api.Assertions.assertThat(
+                projectMemberAssignmentRepository.findByProjectIdAndUserId(projectId, teamLead.getId()))
+                .hasValueSatisfying(a -> org.assertj.core.api.Assertions.assertThat(a.getProjectRole()).isEqualTo("Team Lead"));
+        org.assertj.core.api.Assertions.assertThat(
+                projectMemberAssignmentRepository.findByProjectIdAndUserId(projectId, developer.getId()))
+                .hasValueSatisfying(a -> org.assertj.core.api.Assertions.assertThat(a.getProjectRole()).isEqualTo("Developer"));
+
+        // Admin can remove a member
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .delete("/api/teams/{teamId}/members/{userId}", teamId, developer.getId())
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNoContent());
+
+        // Admin can update project member status
+        mockMvc.perform(patch("/api/projects/{projectId}/members/{userId}/status", projectId, teamLead.getId())
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"status":"In Meeting"}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("In Meeting"));
+
+        // Admin can create tasks on a project they do not own
+        String taskBody = mockMvc.perform(post("/api/tasks")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"projectId":%d,"title":"Admin cross-project task","priority":"High"}
+                                """.formatted(projectId)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long taskId = objectMapper.readTree(taskBody).get("id").asLong();
+
+        // Admin can create sprints on a project they do not own
+        mockMvc.perform(post("/api/projects/{projectId}/sprints", projectId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"Admin Sprint 1","startDate":"2027-01-01","endDate":"2027-01-14","capacityPoints":20}
+                                """))
+                .andExpect(status().isCreated());
+
+        // Admin can change the Project Manager to another manager
+        User newManager = createUser(Role.PROJECT_MANAGER);
+        mockMvc.perform(put("/api/projects/{id}", projectId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"Admin updated cross-project","projectManagerId":%d}
+                                """.formatted(newManager.getId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.projectManager.id").value(newManager.getId()));
+
+        // Admin can delete task
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .delete("/api/tasks/{id}", taskId)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+
+        // Admin can delete the team
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .delete("/api/teams/{id}", teamId)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNoContent());
+
+        // Admin can delete the project
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .delete("/api/projects/{id}", projectId)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNoContent());
+        org.assertj.core.api.Assertions.assertThat(projectRepository.findById(projectId)).isEmpty();
+    }
+
     private User createUser(Role role) {
         String suffix = UUID.randomUUID().toString().replace("-", "");
         User user = new User();

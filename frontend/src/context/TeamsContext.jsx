@@ -20,8 +20,9 @@ export const TeamsProvider = ({ children }) => {
   const fetchTeams = useCallback(async () => {
     const role = currentUser?.role?.toUpperCase();
 
-    // Teams are available only to ADMIN and PROJECT_MANAGER.
-    if (role !== "ADMIN" && role !== "PROJECT_MANAGER") {
+    // Teams are available to ADMIN, PROJECT_MANAGER, PROJECT_LEAD, and TEAM_LEAD.
+    const TEAM_ROLES_WITH_ACCESS = ["ADMIN", "PROJECT_MANAGER", "PROJECT_LEAD", "TEAM_LEAD"];
+    if (!TEAM_ROLES_WITH_ACCESS.includes(role)) {
       setTeams([]);
       setLoading(false);
       return [];
