@@ -461,24 +461,7 @@ const TeamManagement = () => {
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={openCreateModal}
-          disabled={
-            !canManageTeams ||
-            teamsLoading ||
-            availableProjectsForNewTeam.length === 0
-          }
-          title={
-            availableProjectsForNewTeam.length === 0
-              ? "Every accessible project already has a team"
-              : "Create a team"
-          }
-          className="inline-flex items-center justify-center gap-2 self-start rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50 lg:self-auto"
-        >
-          <IoAddSharp size={18} />
-          Create Team
-        </button>
+
       </header>
 
       {(teamsError || (!canManageTeams && !teamsLoading)) && (
