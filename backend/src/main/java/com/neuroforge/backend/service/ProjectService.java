@@ -129,8 +129,6 @@ public class ProjectService {
         project.setTaskCounter(0);
 
         Project saved = projectRepository.save(project);
-        Team team = resolveOrCreateTeam(saved, request.getTeamId());
-        saved.setTeam(team);
 
         if (request.getMemberIds() != null) {
             saved.getMembers().addAll(resolveUsers(request.getMemberIds()));
