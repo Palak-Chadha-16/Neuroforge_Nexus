@@ -1,5 +1,12 @@
 import { useState, useEffect } from "react";
-import { PiGithubLogo, PiX, PiLink, PiCheck, PiInfo } from "react-icons/pi";
+import {
+  PiGithubLogo,
+  PiX,
+  PiLink,
+  PiCheck,
+  PiInfo,
+  PiTrash,
+} from "react-icons/pi";
 import { useProjects } from "../../context/ProjectContextStore.js";
 
 const ConnectRepoModal = ({ isOpen, project, onClose }) => {
@@ -32,17 +39,41 @@ const ConnectRepoModal = ({ isOpen, project, onClose }) => {
       return;
     }
 
-    // Auto prepend https:// if missing
+    // Auto normalize URL to https://
     let fullUrl = trimmed;
-    if (!fullUrl.startsWith("http://") && !fullUrl.startsWith("https://")) {
+    if (fullUrl.startsWith("http://")) {
+      fullUrl = fullUrl.replace(/^http:\/\//i, "https://");
+    } else if (!fullUrl.startsWith("https://")) {
       fullUrl = `https://${fullUrl}`;
+    }
+
+    try {
+      const parsed = new URL(fullUrl);
+      if (!parsed.hostname.toLowerCase().includes("github.com")) {
+        setError(
+          "Repository must be hosted on GitHub (e.g. https://github.com/owner/repo)."
+        );
+        return;
+      }
+      const parts = parsed.pathname.replace(/^\/+|\/+$/g, "").split("/");
+      if (parts.length < 2 || !parts[0] || !parts[1]) {
+        setError(
+          "Repository URL must be in the format: https://github.com/owner/repository"
+        );
+        return;
+      }
+    } catch {
+      setError(
+        "Please enter a valid GitHub URL (e.g. https://github.com/owner/repository)."
+      );
+      return;
     }
 
     setIsSubmitting(true);
     setError("");
 
     try {
-            const result = await updateProject(project.id, {
+      const result = await updateProject(project.id, {
         ...project,
         repository: fullUrl,
       });
@@ -57,6 +88,30 @@ const ConnectRepoModal = ({ isOpen, project, onClose }) => {
       onClose();
     } catch (err) {
       setError(err.message || "Failed to update project repository.");
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    setIsSubmitting(true);
+    setError("");
+
+    try {
+      const result = await updateProject(project.id, {
+        ...project,
+        repository: "",
+      });
+
+      if (result && !result.success) {
+        setError(result.message || "Failed to disconnect repository.");
+        setIsSubmitting(false);
+        return;
+      }
+
+      setIsSubmitting(false);
+      onClose();
+    } catch (err) {
+      setError(err.message || "Failed to disconnect repository.");
       setIsSubmitting(false);
     }
   };
@@ -156,23 +211,46 @@ const ConnectRepoModal = ({ isOpen, project, onClose }) => {
           </div>
 
           {/* Action Buttons */}
-          <div className="flex items-center justify-end gap-2.5 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={isSubmitting}
-              className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 transition"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-5 py-2 text-xs font-semibold text-white shadow-md transition hover:bg-black dark:bg-blue-600 dark:hover:bg-blue-700 disabled:opacity-50"
-            >
-              <PiCheck size={16} />
-              <span>{isSubmitting ? "Connecting..." : "Connect Repository"}</span>
-            </button>
+          <div className="flex items-center justify-between gap-2.5 pt-2">
+            <div>
+              {project.repository && (
+                <button
+                  type="button"
+                  onClick={handleDisconnect}
+                  disabled={isSubmitting}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300 dark:hover:bg-rose-900/60 transition disabled:opacity-50"
+                  title="Remove connected repository from this project"
+                >
+                  <PiTrash size={14} />
+                  <span>Disconnect</span>
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={isSubmitting}
+                className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-5 py-2 text-xs font-semibold text-white shadow-md transition hover:bg-black dark:bg-blue-600 dark:hover:bg-blue-700 disabled:opacity-50"
+              >
+                <PiCheck size={16} />
+                <span>
+                  {isSubmitting
+                    ? "Saving..."
+                    : project.repository
+                    ? "Update Repository"
+                    : "Connect Repository"}
+                </span>
+              </button>
+            </div>
           </div>
         </form>
       </div>

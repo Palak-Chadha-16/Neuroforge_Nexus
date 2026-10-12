@@ -615,22 +615,35 @@ const ProjectManagement = () => {
 
                     <td className="px-6 py-4" onClick={(event) => event.stopPropagation()}>
                       {project.repository ? (
-                        <a
-                          href={
-                            project.repository.startsWith("http")
-                              ? project.repository
-                              : `https://${project.repository}`
-                          }
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(event) => event.stopPropagation()}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-800 shadow-xs transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-slate-600 dark:hover:bg-slate-750"
-                          title={`Open GitHub Repository: ${project.repository}`}
-                        >
-                          <PiGithubLogo size={16} className="text-slate-900 dark:text-white" />
-                          <span>Connected</span>
-                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse ml-0.5" />
-                        </a>
+                        <div className="inline-flex items-center gap-1.5">
+                          <a
+                            href={
+                              project.repository.startsWith("http")
+                                ? project.repository
+                                : `https://${project.repository}`
+                            }
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(event) => event.stopPropagation()}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-800 shadow-xs transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-slate-600 dark:hover:bg-slate-750"
+                            title={`Open GitHub Repository: ${project.repository}`}
+                          >
+                            <PiGithubLogo size={16} className="text-slate-900 dark:text-white" />
+                            <span>Connected</span>
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse ml-0.5" />
+                          </a>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setConnectRepoProject(project);
+                            }}
+                            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-200 transition"
+                            title="Edit or disconnect repository"
+                          >
+                            <PiPencilSimple size={14} />
+                          </button>
+                        </div>
                       ) : (
                         <button
                           type="button"

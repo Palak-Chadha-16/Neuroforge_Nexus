@@ -848,21 +848,31 @@ const ProjectWorkspace = () => {
 
                 <div className="mt-2.5">
                   {project.repository ? (
-                    <a
-                      href={
-                        project.repository.startsWith("http")
-                          ? project.repository
-                          : `https://${project.repository}`
-                      }
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-sm font-semibold text-slate-800 shadow-xs transition hover:border-slate-400 hover:bg-slate-100 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:border-slate-600 dark:hover:bg-slate-700"
-                      title={`Open GitHub Repository: ${project.repository}`}
-                    >
-                      <PiGithubLogo size={20} className="text-slate-900 dark:text-white" />
-                      <span>Connected</span>
-                      <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse ml-0.5" />
-                    </a>
+                    <div className="flex items-center gap-2">
+                      <a
+                        href={
+                          project.repository.startsWith("http")
+                            ? project.repository
+                            : `https://${project.repository}`
+                        }
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-sm font-semibold text-slate-800 shadow-xs transition hover:border-slate-400 hover:bg-slate-100 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:border-slate-600 dark:hover:bg-slate-700"
+                        title={`Open GitHub Repository: ${project.repository}`}
+                      >
+                        <PiGithubLogo size={20} className="text-slate-900 dark:text-white" />
+                        <span>Connected</span>
+                        <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse ml-0.5" />
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => setShowConnectRepo(true)}
+                        className="rounded-xl border border-slate-200 bg-white p-2 text-slate-500 hover:bg-slate-50 hover:text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-200 transition"
+                        title="Edit or disconnect repository"
+                      >
+                        <PiPencilSimple size={16} />
+                      </button>
+                    </div>
                   ) : (
                     <button
                       type="button"

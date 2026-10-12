@@ -59,23 +59,42 @@ export const ProjectProvider = ({ children }) => {
     };
   }, [fetchProjects]);
 
+  const resolveEntityId = (primary, secondary) => {
+    const val =
+      primary !== undefined && primary !== null && primary !== ""
+        ? primary
+        : secondary;
+    if (val === null || val === undefined || val === "") return null;
+    if (typeof val === "object" && val !== null && "id" in val) {
+      return val.id != null ? Number(val.id) : null;
+    }
+    const num = Number(val);
+    return Number.isFinite(num) ? num : null;
+  };
+
   const buildPayload = (formData) => ({
-    name: formData.name,
-    description: formData.description,
-    code: formData.code,
-    projectLeadId: formData.projectLead
-      ? Number(formData.projectLead)
-      : null,
-    projectManagerId: formData.projectManager
-      ? Number(formData.projectManager)
-      : null,
-    teamId: formData.teamId
-      ? Number(formData.teamId)
-      : null,
-    status: formData.status,
+    name: formData.name ? String(formData.name).trim() : "",
+    description:
+      formData.description !== undefined && formData.description !== null
+        ? formData.description
+        : "",
+    code: formData.code || null,
+    projectLeadId: resolveEntityId(
+      formData.projectLeadId,
+      formData.projectLead
+    ),
+    projectManagerId: resolveEntityId(
+      formData.projectManagerId,
+      formData.projectManager
+    ),
+    teamId: resolveEntityId(formData.teamId, formData.team),
+    status: formData.status || "Not Started",
     startDate: formData.startDate || null,
     endDate: formData.endDate || null,
-    repository: formData.repository || "",
+    repository:
+      formData.repository !== undefined && formData.repository !== null
+        ? String(formData.repository).trim()
+        : "",
   });
 
   const createProject = async (formData) => {
@@ -110,14 +129,30 @@ export const ProjectProvider = ({ children }) => {
   };
 
   const updateProject = async (arg1, arg2) => {
-    const formData =
+    const rawData =
       typeof arg1 === "object" && arg1 !== null
         ? arg1
         : { ...(arg2 || {}), id: arg1 };
 
-    const targetId = formData.id;
+    const targetId = rawData.id;
+    const existing =
+      projects.find((p) => String(p.id) === String(targetId)) || {};
+    const formData = { ...existing, ...rawData };
+
+    // Prevent losing project description on partial updates (e.g. repo linking)
+    if (rawData.description === undefined && targetId) {
+      try {
+        const detailRes = await axios.get(`${API_BASE}/projects/${targetId}`);
+        if (detailRes.data?.description !== undefined) {
+          formData.description = detailRes.data.description;
+        }
+      } catch {
+        // Fallback to existing description if detail request fails
+      }
+    }
+
     try {
-            const response = await axios.put(
+      const response = await axios.put(
         `${API_BASE}/projects/${targetId}`,
         buildPayload(formData)
       );
