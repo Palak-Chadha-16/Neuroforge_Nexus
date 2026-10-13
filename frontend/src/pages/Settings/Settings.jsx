@@ -18,10 +18,23 @@ import {
   PiMonitor,
   PiGearSix,
 } from "react-icons/pi";
+import { useTheme } from "../../context/ThemeContextStore.js";
 
 import "./Settings.css";
 
 const STORAGE_KEY = "neuroforge-settings";
+
+const getInitialTheme = () => {
+  try {
+    const savedGlobal = localStorage.getItem("sdlc_theme");
+    if (savedGlobal === "light" || savedGlobal === "dark") {
+      return savedGlobal;
+    }
+  } catch {
+    // ignore
+  }
+  return "dark";
+};
 
 const defaultSettings = {
   profile: {
@@ -42,7 +55,7 @@ const defaultSettings = {
   },
 
   appearance: {
-    theme: "light",
+    theme: getInitialTheme(),
     accentColor: "#6c63ff",
     compactMode: false,
   },
@@ -102,43 +115,54 @@ const sections = [
 ];
 
 function loadSettings() {
+  const initialTheme = getInitialTheme();
+  const baseDefaults = {
+    ...defaultSettings,
+    appearance: {
+      ...defaultSettings.appearance,
+      theme: initialTheme,
+    },
+  };
+
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
 
-    if (!stored) return defaultSettings;
+    if (!stored) return baseDefaults;
 
     const parsed = JSON.parse(stored);
 
     return {
-      ...defaultSettings,
+      ...baseDefaults,
       ...parsed,
       profile: {
-        ...defaultSettings.profile,
+        ...baseDefaults.profile,
         ...parsed.profile,
       },
       notifications: {
-        ...defaultSettings.notifications,
+        ...baseDefaults.notifications,
         ...parsed.notifications,
       },
       appearance: {
-        ...defaultSettings.appearance,
+        ...baseDefaults.appearance,
         ...parsed.appearance,
+        theme: parsed.appearance?.theme || initialTheme,
       },
       testing: {
-        ...defaultSettings.testing,
+        ...baseDefaults.testing,
         ...parsed.testing,
       },
       workspace: {
-        ...defaultSettings.workspace,
+        ...baseDefaults.workspace,
         ...parsed.workspace,
       },
     };
   } catch {
-    return defaultSettings;
+    return baseDefaults;
   }
 }
 
 function Settings() {
+  const { theme: globalTheme, setTheme: setGlobalTheme } = useTheme();
   const [activeSection, setActiveSection] = useState("profile");
   const [settings, setSettings] = useState(loadSettings);
   const [saved, setSaved] = useState(false);
@@ -148,6 +172,8 @@ function Settings() {
     newPassword: "",
     confirmPassword: "",
   });
+
+  const effectiveTheme = globalTheme || settings.appearance.theme || "dark";
 
   useEffect(() => {
     document.documentElement.style.setProperty(
@@ -169,9 +195,26 @@ function Settings() {
     setMessage("");
   };
 
+  const handleThemeChange = (newTheme) => {
+    updateSection("appearance", "theme", newTheme);
+    if (setGlobalTheme) {
+      setGlobalTheme(newTheme);
+    }
+  };
+
   const saveSettings = () => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+      const settingsToSave = {
+        ...settings,
+        appearance: {
+          ...settings.appearance,
+          theme: effectiveTheme,
+        },
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(settingsToSave));
+      if (setGlobalTheme && effectiveTheme) {
+        setGlobalTheme(effectiveTheme);
+      }
       setSaved(true);
       setMessage("Your preferences have been saved on this device.");
     } catch {
@@ -187,8 +230,19 @@ function Settings() {
 
     if (!confirmed) return;
 
-    setSettings(defaultSettings);
+    const resetDefaults = {
+      ...defaultSettings,
+      appearance: {
+        ...defaultSettings.appearance,
+        theme: "dark",
+      },
+    };
+
+    setSettings(resetDefaults);
     localStorage.removeItem(STORAGE_KEY);
+    if (setGlobalTheme) {
+      setGlobalTheme("dark");
+    }
     setPasswordForm({
       currentPassword: "",
       newPassword: "",
@@ -241,7 +295,7 @@ function Settings() {
   return (
     <div
       className={`settings-page ${
-        settings.appearance.theme === "dark" ? "settings-dark" : ""
+        effectiveTheme === "dark" ? "settings-dark" : ""
       } ${settings.appearance.compactMode ? "settings-compact" : ""}`}
       style={{ "--settings-accent": settings.appearance.accentColor }}
     >
@@ -563,11 +617,9 @@ function Settings() {
                 <button
                   type="button"
                   className={`settings-theme-card ${
-                    settings.appearance.theme === "light" ? "selected" : ""
+                    effectiveTheme === "light" ? "selected" : ""
                   }`}
-                  onClick={() =>
-                    updateSection("appearance", "theme", "light")
-                  }
+                  onClick={() => handleThemeChange("light")}
                 >
                   <div className="settings-theme-preview theme-preview-light">
                     <div className="theme-preview-sidebar" />
@@ -580,7 +632,7 @@ function Settings() {
                   <span className="settings-theme-label">
                     <PiSun /> Light
                   </span>
-                  {settings.appearance.theme === "light" && (
+                  {effectiveTheme === "light" && (
                     <PiCheckCircle className="settings-theme-check" />
                   )}
                 </button>
@@ -588,11 +640,9 @@ function Settings() {
                 <button
                   type="button"
                   className={`settings-theme-card ${
-                    settings.appearance.theme === "dark" ? "selected" : ""
+                    effectiveTheme === "dark" ? "selected" : ""
                   }`}
-                  onClick={() =>
-                    updateSection("appearance", "theme", "dark")
-                  }
+                  onClick={() => handleThemeChange("dark")}
                 >
                   <div className="settings-theme-preview theme-preview-dark">
                     <div className="theme-preview-sidebar" />
@@ -605,7 +655,7 @@ function Settings() {
                   <span className="settings-theme-label">
                     <PiMoon /> Dark
                   </span>
-                  {settings.appearance.theme === "dark" && (
+                  {effectiveTheme === "dark" && (
                     <PiCheckCircle className="settings-theme-check" />
                   )}
                 </button>
@@ -680,9 +730,9 @@ function Settings() {
               <div className="settings-note">
                 <PiInfo />
                 <span>
-                  The theme preview applies to this Settings page. To theme
-                  the entire application, connect these preferences to your
-                  global layout and theme provider.
+                  Theme selections are automatically synchronized across the
+                  entire application, including the top navigation bar, sidebar,
+                  and all workspaces.
                 </span>
               </div>
             </div>

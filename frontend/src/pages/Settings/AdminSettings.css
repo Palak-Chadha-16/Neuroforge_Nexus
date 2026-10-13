@@ -424,3 +424,120 @@ flex-basis: 100%;
 flex: 1;
 }
 }
+
+/* Dark theme for Admin Settings */
+
+.dark .admin-settings-page,
+[data-theme="dark"] .admin-settings-page {
+  --admin-accent: #818cf8;
+  --admin-border: #334155;
+  --admin-muted: #94a3b8;
+  color: #f1f5f9;
+  color-scheme: dark;
+}
+
+.dark .admin-settings-header h1 {
+  color: #f8fafc;
+}
+
+.dark .admin-settings-badge {
+  border-color: #4338ca;
+  background: #312e81;
+  color: #c7d2fe;
+}
+
+.dark .admin-settings-notice {
+  border-color: #4338ca;
+  background: #1e1b4b;
+  color: #c7d2fe;
+}
+
+.dark .admin-settings-nav,
+.dark .admin-settings-panel {
+  border-color: #334155;
+  background: #1e293b;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+
+.dark .admin-settings-nav-item {
+  color: #94a3b8;
+}
+
+.dark .admin-settings-nav-item:hover {
+  background: #27354a;
+  color: #c7d2fe;
+}
+
+.dark .admin-settings-nav-item.active {
+  background: #312e81;
+  color: #e0e7ff;
+}
+
+.dark .admin-settings-panel-heading {
+  border-bottom-color: #334155;
+}
+
+.dark .admin-settings-panel-heading h2 {
+  color: #f8fafc;
+}
+
+.dark .admin-settings-section-icon {
+  background: #312e81;
+  color: #818cf8;
+}
+
+.dark .admin-setting-label {
+  color: #f8fafc;
+}
+
+.dark .admin-setting-field input,
+.dark .admin-setting-field select {
+  background: #0f172a;
+  color: #f1f5f9;
+  border-color: #334155;
+}
+
+.dark .admin-setting-field select option {
+  background: #1e293b;
+  color: #f8fafc;
+}
+
+.dark .admin-setting-toggle-row {
+  border-bottom-color: #334155;
+}
+
+.dark .admin-setting-switch {
+  background: #475569;
+}
+
+.dark .admin-setting-checkbox:checked + .admin-setting-switch {
+  background: var(--admin-accent);
+}
+
+.dark .admin-settings-security-card {
+  border-color: #334155;
+  background: #0f172a;
+}
+
+.dark .admin-settings-security-card h3 {
+  color: #f8fafc;
+}
+
+.dark .admin-settings-actions {
+  border-top-color: #334155;
+}
+
+.dark .admin-settings-feedback {
+  color: #34d399;
+}
+
+.dark .admin-settings-reset {
+  border-color: #334155;
+  background: #1e293b;
+  color: #e2e8f0;
+}
+
+.dark .admin-settings-reset:hover {
+  background: #334155;
+}
+

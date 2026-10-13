@@ -977,43 +977,107 @@
 
 /* Dark theme for the settings page */
 
-.settings-page.settings-dark {
-  --settings-bg: #151725;
-  --settings-surface: #1d2031;
-  --settings-text: #f0f1f8;
-  --settings-muted: #a0a4bb;
-  --settings-border: #32354a;
-  --settings-hover: #292c41;
+.settings-page.settings-dark,
+.dark .settings-page,
+[data-theme="dark"] .settings-page {
+  --settings-bg: #0b1120;
+  --settings-surface: #1e293b;
+  --settings-text: #f8fafc;
+  --settings-muted: #94a3b8;
+  --settings-border: #334155;
+  --settings-hover: #27354a;
+  color-scheme: dark;
 }
 
-.settings-dark .settings-message {
-  background: #332b1b;
-  border-color: #5e4b27;
-  color: #f1d29a;
+.settings-page.settings-dark select option,
+.dark .settings-page select option,
+[data-theme="dark"] .settings-page select option {
+  background: #1e293b;
+  color: #f8fafc;
 }
 
-.settings-dark .settings-message-success {
-  background: #193529;
-  border-color: #2d6249;
-  color: #9fe3bd;
+.settings-page.settings-dark input::placeholder,
+.settings-page.settings-dark textarea::placeholder,
+.dark .settings-page input::placeholder,
+.dark .settings-page textarea::placeholder {
+  color: #64748b;
+  opacity: 1;
+}
+
+.settings-dark .settings-message,
+.dark .settings-page .settings-message {
+  background: #2a2415;
+  border-color: #644a1e;
+  color: #fbd38d;
+}
+
+.settings-dark .settings-message-success,
+.dark .settings-page .settings-message-success {
+  background: #132d22;
+  border-color: #1e5a40;
+  color: #6ee7b7;
 }
 
 .settings-dark .settings-security-status,
-.settings-dark .settings-session-badge {
-  background: #193529;
-  color: #9fe3bd;
+.settings-dark .settings-session-badge,
+.dark .settings-page .settings-security-status,
+.dark .settings-page .settings-session-badge {
+  background: #132d22;
+  color: #6ee7b7;
 }
 
-.settings-dark .settings-switch {
-  background: #494d63;
+.settings-dark .settings-switch,
+.dark .settings-page .settings-switch {
+  background: #334155;
 }
 
-.settings-dark .settings-switch.switch-on {
+.settings-dark .settings-switch.switch-on,
+.dark .settings-page .settings-switch.switch-on {
   background: var(--settings-accent);
 }
 
-.settings-dark .settings-note {
-  background: color-mix(in srgb, var(--settings-accent) 8%, var(--settings-surface));
+.settings-dark .settings-note,
+.dark .settings-page .settings-note {
+  background: color-mix(in srgb, var(--settings-accent) 10%, #1e293b);
+  border-color: color-mix(in srgb, var(--settings-accent) 25%, #334155);
+  color: #cbd5e1;
+}
+
+.settings-dark .settings-section-badge,
+.dark .settings-page .settings-section-badge {
+  background: #1e293b;
+  border-color: #334155;
+  color: #94a3b8;
+}
+
+.settings-dark .settings-section-badge svg,
+.dark .settings-page .settings-section-badge svg {
+  color: #34d399;
+}
+
+.settings-dark .settings-workspace-banner,
+.settings-dark .settings-security-card,
+.dark .settings-page .settings-workspace-banner,
+.dark .settings-page .settings-security-card {
+  background: #141f36;
+  border-color: #2e3e5c;
+}
+
+.settings-dark .settings-profile-card,
+.dark .settings-page .settings-profile-card {
+  background: #141f36;
+  border-color: #2e3e5c;
+}
+
+.settings-dark .settings-custom-color input,
+.dark .settings-page .settings-custom-color input {
+  background: #1e293b;
+  border-color: #334155;
+}
+
+.settings-dark .settings-theme-preview,
+.dark .settings-page .settings-theme-preview {
+  border-color: #334155;
 }
 
 /* Compact display */
