@@ -1,11 +1,10 @@
-import { useContext, useEffect, useMemo, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   PiArrowRight,
   PiBug,
   PiCheckCircle,
   PiClock,
-  PiListChecks,
   PiMagnifyingGlass,
   PiPlus,
   PiTrash,
@@ -22,11 +21,11 @@ import DeveloperPerformance from "./components/DeveloperPerformance.jsx";
 import {
   avatarColor,
   getInitials,
-  getLinkedTaskId,
   isDeveloper,
   mergeActivity,
   mergeComments,
 } from "./utils/bugHelpers.js";
+import { normalizeRole, ROLES } from "../../constants/roles.js";
 
 const API_BASE = getApiBase();
 const BUGS_API = `${API_BASE}/bugs`;
@@ -39,6 +38,7 @@ const workflow = [
   "In Progress",
   "Fixed",
   "Retest",
+  "Reopened",
   "Closed",
 ];
 
@@ -189,7 +189,6 @@ const initialForm = {
   severity: "Medium",
   priority: "Medium",
   assignedToId: "",
-  attachments: [],
 };
 
 const labelClass =
@@ -210,7 +209,18 @@ const outlineBtn =
 const linkBtnBase =
   "inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50";
 
-const RESOLVED = ["Fixed", "Retest", "Closed"];
+const CLOSED = "Closed";
+const EXECUTION_ROLES = new Set([ROLES.DEVELOPER, ROLES.TESTER, ROLES.QA]);
+const STATUS_TRANSITIONS = {
+  New: ["Triaged"],
+  Triaged: ["Assigned"],
+  Assigned: ["In Progress"],
+  "In Progress": ["Fixed"],
+  Fixed: ["Retest"],
+  Retest: ["Closed", "Reopened"],
+  Reopened: ["In Progress"],
+  Closed: ["Reopened"],
+};
 
 const BugReporting = () => {
   const { currentUser } = useContext(AuthContext);
@@ -233,6 +243,13 @@ const BugReporting = () => {
   const [activity, setActivity] = useState([]);
   const [comments, setComments] = useState([]);
   const [form, setForm] = useState(initialForm);
+  const [assignmentUserId, setAssignmentUserId] = useState("");
+  const [assignmentSaving, setAssignmentSaving] = useState(false);
+  const [assignmentUsers, setAssignmentUsers] = useState([]);
+  const [teamMembersByProject, setTeamMembersByProject] = useState({});
+  const [assignmentLoadError, setAssignmentLoadError] = useState("");
+  const [editingBug, setEditingBug] = useState(false);
+  const [editForm, setEditForm] = useState(null);
 
   const currentUserName =
     currentUser?.fullName ||
@@ -240,18 +257,108 @@ const BugReporting = () => {
     currentUser?.email ||
     "Current User";
 
-  // Developers cannot report bugs.
   const developerViewer = isDeveloper(currentUser);
-  const canReportBug = !developerViewer;
+  const canReportBug = projects.length > 0;
 
-  const linkedTaskId = getLinkedTaskId(selectedBug);
   const selectedColor = getProjectColor(selectedBug?.projectId);
+  const selectedProject = projects.find(
+    (project) => String(project.id) === String(selectedBug?.projectId)
+  );
+  const formProject = projects.find(
+    (project) => String(project.id) === String(form.projectId)
+  );
+  const currentRole = normalizeRole(currentUser?.role);
+  const getProjectMembers = (project) => [
+    ...(project?.members || []),
+    ...(teamMembersByProject[project?.id] || []),
+  ];
+  const isProjectMember = (project) =>
+    getProjectMembers(project).some(
+      (member) =>
+        String(member.userId ?? member.user?.id ?? member.id) ===
+        String(currentUser?.id)
+    );
+  const isProjectTeamLead = (project) =>
+    currentRole === ROLES.TEAM_LEAD &&
+    getProjectMembers(project).some(
+      (member) =>
+        String(member.userId ?? member.user?.id ?? member.id) ===
+          String(currentUser?.id) &&
+        String(member.teamRole ?? member.role ?? member.projectRole ?? "").toLowerCase() === "team lead"
+    );
+  const canManageBug = (project) =>
+    currentRole === ROLES.ADMIN ||
+    (currentRole === ROLES.PROJECT_MANAGER &&
+      String(project?.projectManagerId ?? project?.projectManager?.id) ===
+        String(currentUser?.id)) ||
+    (currentRole === ROLES.PROJECT_LEAD &&
+      String(project?.projectLeadId ?? project?.projectLead?.id) ===
+        String(currentUser?.id));
+  const canAssignBug = (project) =>
+    canManageBug(project) || isProjectTeamLead(project);
+  const canEditBug = (bug) => {
+    const rawBug = bugs.find((item) => String(item.id) === String(bug?.id)) || bug;
+    const project = projects.find(
+      (item) => String(item.id) === String(rawBug?.projectId)
+    );
+    return (
+      canManageBug(project) ||
+      (EXECUTION_ROLES.has(currentRole) &&
+        String(currentUser?.id) === String(rawBug?.reportedBy) &&
+        isProjectMember(project))
+    );
+  };
+  const canTransitionBug = (bug, nextStatus) => {
+    const rawBug = bugs.find((item) => String(item.id) === String(bug?.id)) || bug;
+    const project = projects.find(
+      (item) => String(item.id) === String(rawBug?.projectId)
+    );
+    const previousStatus = rawBug?.status;
+    if (!STATUS_TRANSITIONS[previousStatus]?.includes(nextStatus)) return false;
+    if (canManageBug(project)) return true;
+    if (
+      currentRole === ROLES.TEAM_LEAD &&
+      isProjectTeamLead(project) &&
+      ((previousStatus === "New" && nextStatus === "Triaged") ||
+        (previousStatus === "Triaged" && nextStatus === "Assigned"))
+    ) return true;
+    if (
+      [ROLES.DEVELOPER, ROLES.TEAM_MEMBER].includes(currentRole) &&
+      String(currentUser?.id) === String(rawBug?.assignedTo) &&
+      ((previousStatus === "Assigned" && nextStatus === "In Progress") ||
+        (previousStatus === "In Progress" && nextStatus === "Fixed") ||
+        (previousStatus === "Reopened" && nextStatus === "In Progress"))
+    ) return true;
+    return (
+      [ROLES.TESTER, ROLES.QA].includes(currentRole) &&
+      isProjectMember(project) &&
+      ((previousStatus === "Fixed" && nextStatus === "Retest") ||
+        (previousStatus === "Retest" &&
+          ["Closed", "Reopened"].includes(nextStatus)) ||
+        (previousStatus === "Closed" && nextStatus === "Reopened"))
+    );
+  };
+  const eligibleAssignees = (project) => {
+    const memberIds = new Set(
+      getProjectMembers(project).map((member) =>
+        String(member.userId ?? member.user?.id ?? member.id)
+      )
+    );
+    return assignmentUsers.filter(
+      (user) =>
+        user.active !== false &&
+        EXECUTION_ROLES.has(normalizeRole(user.role)) &&
+        memberIds.has(String(user.id))
+    );
+  };
 
   const closeDetails = () => {
     setSelectedBug(null);
     setModalNotice("");
     setActivity([]);
     setComments([]);
+    setEditingBug(false);
+    setEditForm(null);
   };
 
   const openDetails = (bug) => {
@@ -260,6 +367,16 @@ const BugReporting = () => {
     setActivity([]);
     setComments([]);
     setSelectedBug(normalizeBug(bug));
+    setAssignmentUserId(bug.assignedTo == null ? "" : String(bug.assignedTo));
+    setEditingBug(false);
+    setEditForm({
+      title: bug.title || "",
+      description: bug.description || "",
+      module: bug.module || "",
+      environment: bug.environment || "Development",
+      severity: bug.severity || "Medium",
+      priority: bug.priority || "Medium",
+    });
   };
 
   const logActivity = async (bugId) => {
@@ -301,23 +418,6 @@ const BugReporting = () => {
     navigate(`/projects/${projectId}`);
   };
 
-  const openLinkedTask = () => {
-    const projectId = selectedBug?.projectId ?? selectedBug?.task?.projectId;
-
-    if (!linkedTaskId) {
-      setModalNotice("This bug is not linked to a task yet.");
-      return;
-    }
-
-    closeDetails();
-
-    if (projectId) {
-      navigate(`/projects/${projectId}/tasks/${linkedTaskId}`);
-    } else {
-      navigate(`/tasks/${linkedTaskId}`);
-    }
-  };
-
   const getProject = (projectId) =>
     projects.find((project) => String(project.id) === String(projectId));
 
@@ -329,6 +429,12 @@ const BugReporting = () => {
     }
 
     for (const project of projects) {
+      if (String(project.projectManager?.id) === String(userId)) {
+        return project.projectManager.fullName || `User #${userId}`;
+      }
+      if (String(project.projectLead?.id) === String(userId)) {
+        return project.projectLead.fullName || `User #${userId}`;
+      }
       const member = (project.members || []).find(
         (user) =>
           String(user.id) === String(userId) ||
@@ -360,7 +466,8 @@ const BugReporting = () => {
     };
   }
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
+    const viewerRole = normalizeRole(currentUser?.role);
     setLoading(true);
     setError("");
 
@@ -370,8 +477,52 @@ const BugReporting = () => {
         axios.get(PROJECTS_API),
       ]);
 
-      setProjects(Array.isArray(projectResponse.data) ? projectResponse.data : []);
+      const loadedProjects = Array.isArray(projectResponse.data)
+        ? projectResponse.data
+        : [];
+      setProjects(loadedProjects);
       setBugs(Array.isArray(bugResponse.data) ? bugResponse.data : []);
+
+      setAssignmentUsers([]);
+      setTeamMembersByProject({});
+      setAssignmentLoadError("");
+      if (
+        [
+          ROLES.ADMIN,
+          ROLES.PROJECT_MANAGER,
+          ROLES.PROJECT_LEAD,
+          ROLES.TEAM_LEAD,
+        ].includes(viewerRole)
+      ) {
+        try {
+          const userResponse = await axios.get(`${API_BASE}/users/options`);
+          setAssignmentUsers(Array.isArray(userResponse.data) ? userResponse.data : []);
+        } catch (userError) {
+          setAssignmentLoadError(
+            userError.response?.data?.message ||
+              "Active bug assignees could not be loaded."
+          );
+        }
+      }
+
+      const teams = loadedProjects.filter((project) => project.teamId != null);
+      const teamMemberResults = await Promise.all(
+        teams.map(async (project) => {
+          try {
+            const response = await axios.get(
+              `${API_BASE}/teams/${project.teamId}/members`
+            );
+            return [project.id, Array.isArray(response.data) ? response.data : []];
+          } catch (teamError) {
+            setAssignmentLoadError(
+              teamError.response?.data?.message ||
+                "Project team assignments could not be loaded."
+            );
+            return [project.id, []];
+          }
+        })
+      );
+      setTeamMembersByProject(Object.fromEntries(teamMemberResults));
     } catch (requestError) {
       console.error("Failed to load testing data:", requestError);
       setError(
@@ -381,7 +532,7 @@ const BugReporting = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [currentUser?.role]);
 
   useEffect(() => {
     let active = true;
@@ -392,7 +543,7 @@ const BugReporting = () => {
     return () => {
       active = false;
     };
-  }, []);
+  }, [loadData]);
 
   const selectedBugId = selectedBug?.id;
   useEffect(() => {
@@ -420,9 +571,6 @@ const BugReporting = () => {
       active = false;
     };
   }, [selectedBugId]);
-
-  const selectedProject = getProject(form.projectId);
-  const availableMembers = selectedProject?.members || [];
 
   const refreshBugs = async () => {
     const response = await axios.get(BUGS_API);
@@ -480,7 +628,7 @@ const BugReporting = () => {
     },
     {
       label: "Open Bugs",
-      value: bugs.filter((bug) => !["Closed", "Fixed"].includes(bug.status))
+      value: bugs.filter((bug) => bug.status !== CLOSED)
         .length,
       icon: PiClock,
       iconClass: "text-orange-500",
@@ -506,26 +654,6 @@ const BugReporting = () => {
       ...current,
       [name]: value,
       ...(name === "projectId" ? { assignedToId: "" } : {}),
-    }));
-  };
-
-  const handleAttachments = (event) => {
-    const files = Array.from(event.target.files || []);
-
-    setForm((current) => ({
-      ...current,
-      attachments: [...current.attachments, ...files.map((file) => file.name)],
-    }));
-
-    event.target.value = "";
-  };
-
-  const removeAttachment = (index) => {
-    setForm((current) => ({
-      ...current,
-      attachments: current.attachments.filter(
-        (_, fileIndex) => fileIndex !== index
-      ),
     }));
   };
 
@@ -559,8 +687,9 @@ const BugReporting = () => {
         environment: form.environment,
         severity: form.severity,
         priority: form.priority,
-        assignedTo: form.assignedToId ? Number(form.assignedToId) : null,
-        attachments: form.attachments.join("|"),
+        ...(canAssignBug(getProject(form.projectId))
+          ? { assignedTo: form.assignedToId ? Number(form.assignedToId) : null }
+          : {}),
       });
 
       await refreshBugs();
@@ -575,23 +704,15 @@ const BugReporting = () => {
     }
   };
 
-  const updateBugStatus = async (bugId, status) => {
-    const previous = selectedBug?.status;
-
+  const updateBugStatus = async (bugId, status, retestResult) => {
     try {
       const response = await axios.patch(`${BUGS_API}/${bugId}/status`, {
         status,
-        retestResult:
-          status === "Retest" || status === "In Progress"
-            ? null
-            : selectedBug?.retestResult ?? null,
+        ...(retestResult ? { retestResult } : {}),
       });
 
       applyBugUpdate(bugId, response.data);
-
-      if (previous && previous !== status) {
-        await logActivity(bugId);
-      }
+      await logActivity(bugId);
     } catch (requestError) {
       console.error("Failed to update bug status:", requestError);
       setModalNotice(
@@ -600,22 +721,60 @@ const BugReporting = () => {
     }
   };
 
-  const handleRetest = async (bugId, result) => {
-    const nextStatusValue = result === "Passed" ? "Closed" : "Reopened";
+  const handleRetest = (bugId, result) =>
+    updateBugStatus(bugId, result === "Passed" ? "Closed" : "Reopened", result);
 
+  const updateAssignment = async () => {
+    if (!selectedBug || !canAssignBug(selectedProject)) return;
+    setAssignmentSaving(true);
     try {
-      const response = await axios.patch(`${BUGS_API}/${bugId}/status`, {
-        status: nextStatusValue,
-        retestResult: result,
-      });
-
-      applyBugUpdate(bugId, response.data);
-
-      await logActivity(bugId);
+      const response = await axios.patch(
+        `${BUGS_API}/${selectedBug.id}/assignment`,
+        { assignedTo: assignmentUserId ? Number(assignmentUserId) : null }
+      );
+      applyBugUpdate(selectedBug.id, response.data);
+      setModalNotice("");
+      setAssignmentUserId(
+        response.data.assignedTo == null ? "" : String(response.data.assignedTo)
+      );
+      await logActivity(selectedBug.id);
     } catch (requestError) {
-      console.error("Failed to save retest result:", requestError);
       setModalNotice(
-        requestError.response?.data?.message || "Failed to save retest result."
+        requestError.response?.data?.message || "Failed to update bug assignment."
+      );
+    } finally {
+      setAssignmentSaving(false);
+    }
+  };
+
+  const saveBugDetails = async () => {
+    if (
+      !selectedBug ||
+      !editForm ||
+      !editForm.title.trim() ||
+      !editForm.description.trim() ||
+      !editForm.module.trim() ||
+      !editForm.environment.trim() ||
+      !editForm.severity.trim() ||
+      !editForm.priority.trim()
+    ) {
+      setModalNotice("Complete all bug fields before saving.");
+      return;
+    }
+    try {
+      const response = await axios.put(`${BUGS_API}/${selectedBug.id}`, {
+        ...editForm,
+        ...(canAssignBug(selectedProject)
+          ? { assignedTo: assignmentUserId ? Number(assignmentUserId) : null }
+          : {}),
+      });
+      applyBugUpdate(selectedBug.id, response.data);
+      setEditingBug(false);
+      setModalNotice("");
+      await logActivity(selectedBug.id);
+    } catch (requestError) {
+      setModalNotice(
+        requestError.response?.data?.message || "Failed to update bug details."
       );
     }
   };
@@ -637,16 +796,10 @@ const BugReporting = () => {
     }
   };
 
-  const getNextWorkflowStatus = (status) => {
-    const index = workflow.indexOf(status);
-    if (index === -1 || index >= workflow.length - 1) return null;
-    return workflow[index + 1];
-  };
-
   const getStatusConfig = (status) => statusConfig[status] || statusConfig.New;
 
-  const nextStatus = selectedBug
-    ? getNextWorkflowStatus(selectedBug.status)
+  const nextStatus = selectedBug && selectedBug.status !== "Retest"
+    ? workflow.find((status) => canTransitionBug(selectedBug, status))
     : null;
 
   const SelectedStatusIcon = selectedBug
@@ -675,15 +828,9 @@ const BugReporting = () => {
     ? bugs.filter(
         (bug) =>
           String(bug.assignedTo) === String(rawSelected.assignedTo) &&
-          !RESOLVED.includes(bug.status)
+          bug.status !== CLOSED
       ).length
     : 0;
-
-  const linkedTaskTitle =
-    selectedBug?.taskTitle ??
-    selectedBug?.task?.title ??
-    selectedBug?.linkedTask?.title ??
-    null;
 
   const hasDeveloper = selectedBug && selectedBug.assignedTo !== "Unassigned";
 
@@ -929,7 +1076,7 @@ const BugReporting = () => {
         </div>
       </div>
 
-      {/* Report modal (testers / managers only) */}
+      {/* Report modal */}
       {showReportModal && canReportBug && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white shadow-xl dark:bg-gray-800">
@@ -1055,26 +1202,30 @@ const BugReporting = () => {
                   </select>
                 </div>
 
-                <div>
-                  <label className={labelClass}>Assigned To</label>
-                  <select
-                    name="assignedToId"
-                    value={form.assignedToId}
-                    onChange={handleInputChange}
-                    disabled={!form.projectId}
-                    className={`${fieldClass} disabled:cursor-not-allowed disabled:opacity-60`}
-                  >
-                    <option value="">Unassigned</option>
-                    {availableMembers.map((user) => (
-                      <option
-                        key={user.userId || user.id}
-                        value={user.userId || user.id}
-                      >
-                        {user.fullName || user.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                {canAssignBug(formProject) && (
+                  <div>
+                    <label className={labelClass}>Assigned To</label>
+                    <select
+                      name="assignedToId"
+                      value={form.assignedToId}
+                      onChange={handleInputChange}
+                      disabled={!form.projectId || Boolean(assignmentLoadError)}
+                      className={`${fieldClass} disabled:cursor-not-allowed disabled:opacity-60`}
+                    >
+                      <option value="">Unassigned</option>
+                      {eligibleAssignees(formProject).map((user) => (
+                        <option key={user.id} value={user.id}>
+                          {user.fullName || user.name}
+                        </option>
+                      ))}
+                    </select>
+                    {assignmentLoadError && (
+                      <p className="mt-1 text-xs text-red-600" role="alert">
+                        {assignmentLoadError}
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 <div>
                   <label className={labelClass}>Reported By</label>
@@ -1086,38 +1237,6 @@ const BugReporting = () => {
                   />
                 </div>
 
-                <div className="md:col-span-2">
-                  <label className={labelClass}>Attachments</label>
-                  <input
-                    type="file"
-                    multiple
-                    onChange={handleAttachments}
-                    className="w-full rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-3 text-sm text-gray-600 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300"
-                  />
-
-                  {form.attachments.length > 0 && (
-                    <div className="mt-3 space-y-2">
-                      {form.attachments.map((file, index) => (
-                        <div
-                          key={`${file}-${index}`}
-                          className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-700"
-                        >
-                          <span className="truncate text-sm text-gray-700 dark:text-gray-200">
-                            {file}
-                          </span>
-
-                          <button
-                            type="button"
-                            onClick={() => removeAttachment(index)}
-                            className="ml-3 rounded p-1 text-gray-400 hover:text-red-500"
-                          >
-                            <PiX size={17} />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
               </div>
 
               <div className="flex justify-end gap-3 border-t border-gray-200 pt-5 dark:border-gray-700">
@@ -1245,14 +1364,82 @@ const BugReporting = () => {
                     </div>
                   </div>
 
-                  <div>
-                    <p className="text-sm font-semibold text-gray-900 dark:text-white">
-                      Description
-                    </p>
-                    <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-600 dark:text-gray-300">
-                      {selectedBug.description}
-                    </p>
-                  </div>
+                  {editingBug && canEditBug(selectedBug) ? (
+                    <div className="space-y-4 rounded-xl border border-gray-200 p-4 dark:border-gray-700">
+                      <label className="block">
+                        <span className={labelClass}>Title</span>
+                        <input
+                          value={editForm?.title || ""}
+                          onChange={(event) => setEditForm((value) => ({
+                            ...value, title: event.target.value,
+                          }))}
+                          className={fieldClass}
+                          maxLength={255}
+                          required
+                        />
+                      </label>
+                      <label className="block">
+                        <span className={labelClass}>Description</span>
+                        <textarea
+                          value={editForm?.description || ""}
+                          onChange={(event) => setEditForm((value) => ({
+                            ...value, description: event.target.value,
+                          }))}
+                          className={fieldClass}
+                          rows={5}
+                          required
+                        />
+                      </label>
+                      <div className="grid gap-4 md:grid-cols-2">
+                        {[
+                          ["module", "Module"],
+                          ["environment", "Environment"],
+                          ["severity", "Severity"],
+                          ["priority", "Priority"],
+                        ].map(([field, label]) => (
+                          <label key={field} className="block">
+                            <span className={labelClass}>{label}</span>
+                            <input
+                              value={editForm?.[field] || ""}
+                              onChange={(event) => setEditForm((value) => ({
+                                ...value, [field]: event.target.value,
+                              }))}
+                              className={fieldClass}
+                              required
+                            />
+                          </label>
+                        ))}
+                      </div>
+                      <div className="flex justify-end gap-2">
+                        <button type="button" className={outlineBtn} onClick={() => setEditingBug(false)}>
+                          Cancel
+                        </button>
+                        <button type="button" className={primaryBtn} onClick={saveBugDetails}>
+                          Save changes
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm font-semibold text-gray-900 dark:text-white">
+                          Description
+                        </p>
+                        {canEditBug(selectedBug) && (
+                          <button
+                            type="button"
+                            className={outlineBtn}
+                            onClick={() => setEditingBug(true)}
+                          >
+                            Edit bug
+                          </button>
+                        )}
+                      </div>
+                      <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-600 dark:text-gray-300">
+                        {selectedBug.description}
+                      </p>
+                    </>
+                  )}
 
                   <BugAISummary
                     bug={selectedBug}
@@ -1292,13 +1479,13 @@ const BugReporting = () => {
                     </div>
                   </div>
 
-                  {/* Bug <-> Task <-> Developer */}
+                  {/* Bug assignment */}
                   <div>
                     <p className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">
-                      Bug, Task and Developer
+                      Bug and assignment
                     </p>
 
-                    <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_auto_1fr_auto_1fr] md:items-stretch">
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_auto_1fr] md:items-stretch">
                       <div className="rounded-xl border border-gray-200 p-4 dark:border-gray-700">
                         <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
                           <PiBug size={14} />
@@ -1311,44 +1498,6 @@ const BugReporting = () => {
                           {selectedBug.title}
                         </p>
                       </div>
-
-                      <PiArrowRight
-                        size={18}
-                        className="hidden self-center text-gray-400 md:block"
-                      />
-
-                      {linkedTaskId ? (
-                        <button
-                          type="button"
-                          onClick={openLinkedTask}
-                          className={`rounded-xl p-4 text-left transition ${selectedColor.soft}`}
-                        >
-                          <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide opacity-80">
-                            <PiListChecks size={14} />
-                            Linked task
-                          </p>
-                          <p className="mt-2 text-sm font-semibold">
-                            {linkedTaskTitle || `Task #${linkedTaskId}`}
-                          </p>
-                          <p className="mt-1 inline-flex items-center gap-1 text-xs font-semibold">
-                            Open task
-                            <PiArrowRight size={13} />
-                          </p>
-                        </button>
-                      ) : (
-                        <div className="rounded-xl border border-dashed border-gray-300 p-4 dark:border-gray-600">
-                          <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                            <PiListChecks size={14} />
-                            Linked task
-                          </p>
-                          <p className="mt-2 text-sm font-semibold text-gray-600 dark:text-gray-300">
-                            No task linked yet
-                          </p>
-                          <p className="mt-1 text-xs text-gray-400">
-                            It will appear here once connected.
-                          </p>
-                        </div>
-                      )}
 
                       <PiArrowRight
                         size={18}
@@ -1384,6 +1533,33 @@ const BugReporting = () => {
                             Unassigned
                           </p>
                         )}
+                        {canAssignBug(selectedProject) && (
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <select
+                              value={assignmentUserId}
+                              onChange={(event) => setAssignmentUserId(event.target.value)}
+                              className={`${fieldClass} min-w-48 flex-1`}
+                            >
+                              <option value="">Unassigned</option>
+                              {eligibleAssignees(selectedProject).map((member) => {
+                                const id = member.userId ?? member.user?.id ?? member.id;
+                                return (
+                                  <option key={id} value={id}>
+                                    {member.fullName || member.user?.fullName || member.name || `User #${id}`}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                            <button
+                              type="button"
+                              className={outlineBtn}
+                              disabled={assignmentSaving}
+                              onClick={updateAssignment}
+                            >
+                              {assignmentSaving ? "Saving..." : "Save assignment"}
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1394,41 +1570,41 @@ const BugReporting = () => {
                     </p>
 
                     <div className="flex flex-wrap items-center gap-2">
-                      {workflow.map((stage, index) => {
+                      {workflow.map((stage) => {
                         const active =
-                          selectedBug.status === stage ||
-                          (selectedBug.status === "Reopened" &&
-                            stage === "In Progress");
+                          selectedBug.status === stage;
+                        const allowed = !active &&
+                          selectedBug.status !== "Retest" &&
+                          canTransitionBug(selectedBug, stage);
 
                         return (
                           <div key={stage} className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                updateBugStatus(selectedBug.id, stage)
-                              }
-                              className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                            {allowed ? (
+                              <button
+                                type="button"
+                                onClick={() => updateBugStatus(selectedBug.id, stage)}
+                                className="rounded-full bg-gray-100 px-3 py-1.5 text-xs font-semibold text-gray-700 transition hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                              >
+                                {stage}
+                              </button>
+                            ) : (
+                              <span className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
                                 active
                                   ? "bg-gray-900 text-white dark:bg-white dark:text-gray-900"
-                                  : "bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
-                              }`}
-                            >
-                              {stage}
-                            </button>
-
-                            {index < workflow.length - 1 && (
-                              <PiArrowRight
-                                size={14}
-                                className="text-gray-400"
-                              />
+                                  : "bg-gray-50 text-gray-400 dark:bg-gray-800 dark:text-gray-500"
+                              }`}>
+                                {stage}
+                              </span>
                             )}
+
                           </div>
                         );
                       })}
                     </div>
                   </div>
 
-                  {selectedBug.status === "Reopened" && (
+                  {selectedBug.status === "Reopened" &&
+                    canTransitionBug(selectedBug, "In Progress") && (
                     <div className="rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-500/20 dark:bg-red-500/10">
                       <p className="text-sm font-semibold text-red-800 dark:text-red-300">
                         Bug Reopened
@@ -1440,7 +1616,9 @@ const BugReporting = () => {
                     </div>
                   )}
 
-                  {selectedBug.status === "Retest" && (
+                  {selectedBug.status === "Retest" &&
+                    (canTransitionBug(selectedBug, "Closed") ||
+                      canTransitionBug(selectedBug, "Reopened")) && (
                     <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-4 dark:border-yellow-500/20 dark:bg-yellow-500/10">
                       <p className="text-sm font-semibold text-yellow-800 dark:text-yellow-300">
                         Retest Required
@@ -1454,6 +1632,7 @@ const BugReporting = () => {
                         <button
                           type="button"
                           onClick={() => handleRetest(selectedBug.id, "Passed")}
+                          disabled={!canTransitionBug(selectedBug, "Closed")}
                           className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700"
                         >
                           Passed
@@ -1462,6 +1641,7 @@ const BugReporting = () => {
                         <button
                           type="button"
                           onClick={() => handleRetest(selectedBug.id, "Failed")}
+                          disabled={!canTransitionBug(selectedBug, "Reopened")}
                           className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
                         >
                           Failed
@@ -1490,7 +1670,10 @@ const BugReporting = () => {
                   {selectedBug.attachments?.length > 0 && (
                     <div>
                       <p className="text-sm font-semibold text-gray-900 dark:text-white">
-                        Attachments
+                    Stored attachment references
+                      </p>
+                      <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    These names were saved without uploading file contents.
                       </p>
 
                       <div className="mt-3 space-y-2">
@@ -1540,31 +1723,22 @@ const BugReporting = () => {
                     <PiArrowRight size={16} />
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={openLinkedTask}
-                    disabled={!linkedTaskId}
-                    title={
-                      linkedTaskId
-                        ? "Open the task linked to this bug"
-                        : "No task is linked to this bug yet"
-                    }
-                    className={`${linkBtnBase} ${selectedColor.soft}`}
-                  >
-                    Open Linked Task
-                    <PiArrowRight size={16} />
-                  </button>
+                  <span className="self-center text-xs text-gray-500 dark:text-gray-400">
+                    Task linking is not supported for bug reports.
+                  </span>
                 </div>
 
                 <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => deleteBug(selectedBug.id)}
-                    className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 dark:border-red-500/20 dark:hover:bg-red-500/10"
-                  >
-                    <PiTrash size={17} />
-                    Delete Bug
-                  </button>
+                  {canManageBug(selectedProject) && (
+                    <button
+                      type="button"
+                      onClick={() => deleteBug(selectedBug.id)}
+                      className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 dark:border-red-500/20 dark:hover:bg-red-500/10"
+                    >
+                      <PiTrash size={17} />
+                      Delete Bug
+                    </button>
+                  )}
 
                   {nextStatus && (
                     <button
@@ -1577,18 +1751,6 @@ const BugReporting = () => {
                     </button>
                   )}
 
-                  {selectedBug.status === "Reopened" && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        updateBugStatus(selectedBug.id, "In Progress")
-                      }
-                      className={primaryBtn}
-                    >
-                      Move to In Progress
-                      <PiArrowRight size={17} />
-                    </button>
-                  )}
                 </div>
               </div>
             </div>

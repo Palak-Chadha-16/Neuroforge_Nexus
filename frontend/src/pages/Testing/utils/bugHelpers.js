@@ -1,3 +1,5 @@
+import { normalizeRole, ROLES } from "../../../constants/roles.js";
+
 const roleOf = (user) => {
   const raw =
     user?.role ?? user?.roleName ?? user?.userRole ?? user?.roles?.[0];
@@ -6,8 +8,8 @@ const roleOf = (user) => {
   return String(value).toLowerCase();
 };
 
-// Hides "Report Bug" for developers. Adjust if your role field differs.
-export const isDeveloper = (user) => roleOf(user).includes("developer");
+export const isDeveloper = (user) =>
+  normalizeRole(roleOf(user)) === ROLES.DEVELOPER;
 
 export const mergeActivity = (bug, activity = []) => {
   const server = [bug?.activity, bug?.history, bug?.activities].find(
@@ -16,7 +18,7 @@ export const mergeActivity = (bug, activity = []) => {
 
   const mapped = (server || [])
     .map((event, index) => ({
-      id: `srv-${event.id ?? index}`,
+      id: event.id ?? `srv-${index}`,
       at: event.createdAt ?? event.at ?? event.timestamp,
       type: event.type ?? "status",
       actor: event.actor ?? event.user ?? event.performedBy ?? "System",
@@ -24,20 +26,16 @@ export const mergeActivity = (bug, activity = []) => {
     }))
     .filter((event) => event.at && event.text);
 
-  const created = bug?.createdAt
-    && ![...mapped, ...activity].some((event) => event.type === "created")
-    ? [
-        {
-          id: "created",
-          at: bug.createdAt,
-          type: "created",
-          actor: bug.reportedBy || "Someone",
-          text: "reported this bug",
-        },
-      ]
-    : [];
+  const events = [...mapped, ...activity];
+  const uniqueEvents = [...new Map(
+    events.map((event, index) => [
+      String(event.id ?? `${event.type}-${event.at}-${event.actor}-${index}`)
+        .replace(/^srv-/, ""),
+      event,
+    ])
+  ).values()];
 
-  return [...created, ...mapped, ...activity].sort(
+  return uniqueEvents.sort(
     (a, b) => new Date(b.at) - new Date(a.at)
   );
 };
@@ -47,7 +45,7 @@ export const mergeComments = (bug, comments = []) => {
 
   const mapped = server
     .map((comment, index) => ({
-      id: `srv-${comment.id ?? index}`,
+      id: comment.id ?? `srv-${index}`,
       at: comment.createdAt ?? comment.at,
       author:
         comment.author ??
@@ -58,19 +56,18 @@ export const mergeComments = (bug, comments = []) => {
     }))
     .filter((comment) => comment.at && comment.text);
 
-  return [...mapped, ...comments].sort(
+  const uniqueComments = [...new Map(
+    [...mapped, ...comments].map((comment, index) => [
+      String(comment.id ?? `${comment.at}-${comment.author}-${index}`)
+        .replace(/^srv-/, ""),
+      comment,
+    ])
+  ).values()];
+
+  return uniqueComments.sort(
     (a, b) => new Date(a.at) - new Date(b.at)
   );
 };
-
-export const getLinkedTaskId = (bug) =>
-  bug?.taskId ??
-  bug?.linkedTaskId ??
-  bug?.task_id ??
-  bug?.relatedTaskId ??
-  bug?.linkedTask?.id ??
-  bug?.task?.id ??
-  null;
 
 export const getInitials = (name = "") =>
   String(name)

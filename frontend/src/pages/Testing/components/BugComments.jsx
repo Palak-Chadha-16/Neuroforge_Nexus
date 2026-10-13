@@ -38,13 +38,15 @@ const BugComments = ({
   const suggestions = mention
     ? members
         .filter((member) =>
-          member.name.toLowerCase().includes(mention[1].toLowerCase())
+          String(member.name || "")
+            .toLowerCase()
+            .includes(mention[1].toLowerCase())
         )
         .slice(0, 5)
     : [];
 
   const insertMention = (member) => {
-    const first = member.name.split(" ")[0];
+    const first = String(member.name || "teammate").split(" ")[0];
     setText((current) => current.replace(/@(\w*)$/, `@${first} `));
   };
 

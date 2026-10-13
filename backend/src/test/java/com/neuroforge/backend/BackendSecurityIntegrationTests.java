@@ -29,6 +29,8 @@ import com.neuroforge.backend.entity.Role;
 import com.neuroforge.backend.entity.Project;
 import com.neuroforge.backend.entity.Sprint;
 import com.neuroforge.backend.entity.Task;
+import com.neuroforge.backend.entity.Team;
+import com.neuroforge.backend.entity.TeamMember;
 import com.neuroforge.backend.entity.User;
 import com.neuroforge.backend.repository.BugReportActivityRepository;
 import com.neuroforge.backend.repository.BugReportCommentRepository;
@@ -38,6 +40,7 @@ import com.neuroforge.backend.repository.ProjectMemberAssignmentRepository;
 import com.neuroforge.backend.repository.ProjectRepository;
 import com.neuroforge.backend.repository.SprintRepository;
 import com.neuroforge.backend.repository.TaskRepository;
+import com.neuroforge.backend.repository.TeamRepository;
 import com.neuroforge.backend.repository.TeamMemberRepository;
 import com.neuroforge.backend.repository.UserRepository;
 import com.neuroforge.backend.security.JwtService;
@@ -81,6 +84,9 @@ class BackendSecurityIntegrationTests {
 
     @Autowired
     private TeamMemberRepository teamMemberRepository;
+
+    @Autowired
+    private TeamRepository teamRepository;
 
     @Autowired
     private ProjectMemberAssignmentRepository projectMemberAssignmentRepository;
@@ -258,6 +264,23 @@ class BackendSecurityIntegrationTests {
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
+                                {"status":"Triaged"}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("Triaged"));
+
+        mockMvc.perform(patch("/api/bugs/{id}/status", bugId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"status":"Assigned"}
+                                """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(patch("/api/bugs/{id}/status", bugId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
                                 {"status":"In Progress"}
                                 """))
                 .andExpect(status().isOk())
@@ -271,7 +294,7 @@ class BackendSecurityIntegrationTests {
         mockMvc.perform(get("/api/bugs/{id}/activity", bugId)
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(3));
+                .andExpect(jsonPath("$.length()").value(5));
 
         mockMvc.perform(get("/api/bugs/{id}", bugId)
                         .header("Authorization", "Bearer " + jwtService.generateToken(caller)))
@@ -285,7 +308,364 @@ class BackendSecurityIntegrationTests {
         org.assertj.core.api.Assertions.assertThat(commentRepository.findByBugIdOrderByCreatedAtAscIdAsc(bugId))
                 .hasSize(1);
         org.assertj.core.api.Assertions.assertThat(activityRepository.findByBugIdOrderByCreatedAtAscIdAsc(bugId))
-                .hasSize(3);
+                .hasSize(5);
+    }
+
+    @Test
+    void bugWorkflowValidatesTransitionsAssignmentsRetestsAndActivity() throws Exception {
+        User manager = createUser(Role.PROJECT_MANAGER);
+        User assignedDeveloper = createUser(Role.DEVELOPER);
+        User otherDeveloper = createUser(Role.DEVELOPER);
+        User tester = createUser(Role.TESTER);
+        User nonmemberTester = createUser(Role.TESTER);
+        Project project = createProject(manager);
+        project.getMembers().add(assignedDeveloper);
+        project.getMembers().add(otherDeveloper);
+        project.getMembers().add(tester);
+        projectRepository.saveAndFlush(project);
+
+        String managerToken = jwtService.generateToken(manager);
+        String developerToken = jwtService.generateToken(assignedDeveloper);
+        String otherDeveloperToken = jwtService.generateToken(otherDeveloper);
+        String testerToken = jwtService.generateToken(tester);
+        String nonmemberTesterToken = jwtService.generateToken(nonmemberTester);
+        String bugJson = """
+                {
+                  "title":"Workflow bug",
+                  "description":"Workflow description",
+                  "projectId":%d,
+                  "module":"API",
+                  "environment":"Integration",
+                  "severity":"High",
+                  "priority":"High",
+                  "assignedTo":%d
+                }
+                """.formatted(project.getId(), assignedDeveloper.getId());
+        String response = mockMvc.perform(post("/api/bugs")
+                        .header("Authorization", "Bearer " + managerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(bugJson))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.bugKey").value(org.hamcrest.Matchers.startsWith("BUG-")))
+                .andExpect(jsonPath("$.assignedTo").value(assignedDeveloper.getId()))
+                .andReturn().getResponse().getContentAsString();
+        long bugId = objectMapper.readTree(response).get("id").asLong();
+
+        mockMvc.perform(patch("/api/bugs/{id}/status", bugId)
+                        .header("Authorization", "Bearer " + managerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"in_progress\"}"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(patch("/api/bugs/{id}/status", bugId)
+                        .header("Authorization", "Bearer " + managerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"Assigned\"}"))
+                .andExpect(status().isConflict());
+
+        mockMvc.perform(patch("/api/bugs/{id}/status", bugId)
+                        .header("Authorization", "Bearer " + managerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"Triaged\"}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(patch("/api/bugs/{id}/status", bugId)
+                        .header("Authorization", "Bearer " + managerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"Assigned\"}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .delete("/api/projects/{projectId}/members/{userId}",
+                                project.getId(), assignedDeveloper.getId())
+                        .header("Authorization", "Bearer " + managerToken))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(patch("/api/bugs/{id}/status", bugId)
+                        .header("Authorization", "Bearer " + developerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"In Progress\"}"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/projects/{projectId}/members", project.getId())
+                                .header("Authorization", "Bearer " + managerToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {"userId":%d,"projectRole":"Developer"}
+                                        """.formatted(assignedDeveloper.getId())))
+                        .andExpect(status().isCreated());
+        mockMvc.perform(patch("/api/bugs/{id}/status", bugId)
+                        .header("Authorization", "Bearer " + otherDeveloperToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"In Progress\"}"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(patch("/api/bugs/{id}/status", bugId)
+                        .header("Authorization", "Bearer " + developerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"In Progress\"}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(patch("/api/bugs/{id}/status", bugId)
+                        .header("Authorization", "Bearer " + developerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"Fixed\"}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(patch("/api/bugs/{id}/status", bugId)
+                        .header("Authorization", "Bearer " + nonmemberTesterToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"Retest\"}"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(patch("/api/bugs/{id}/status", bugId)
+                        .header("Authorization", "Bearer " + testerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"Retest\"}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(patch("/api/bugs/{id}/status", bugId)
+                        .header("Authorization", "Bearer " + testerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"Closed\",\"retestResult\":\"Failed\"}"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(patch("/api/bugs/{id}/status", bugId)
+                        .header("Authorization", "Bearer " + testerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"Reopened\",\"retestResult\":\"Failed\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.retestResult").value("Failed"));
+        mockMvc.perform(patch("/api/bugs/{id}/status", bugId)
+                        .header("Authorization", "Bearer " + developerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"In Progress\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.retestResult")
+                        .value(org.hamcrest.Matchers.nullValue()));
+
+        mockMvc.perform(patch("/api/bugs/{id}/assignment", bugId)
+                        .header("Authorization", "Bearer " + developerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"assignedTo\":null}"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/bugs/{id}/activity", bugId)
+                        .header("Authorization", "Bearer " + managerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].type").value("created"))
+                .andExpect(jsonPath("$[*].type", org.hamcrest.Matchers.hasItem("assignment")))
+                .andExpect(jsonPath("$[*].type", org.hamcrest.Matchers.hasItem("retest")));
+
+        String secondResponse = mockMvc.perform(post("/api/bugs")
+                        .header("Authorization", "Bearer " + managerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(bugJson.replace("Workflow bug", "Second workflow bug")))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        org.assertj.core.api.Assertions.assertThat(
+                objectMapper.readTree(secondResponse).get("bugKey").asText())
+                .isNotEqualTo(objectMapper.readTree(response).get("bugKey").asText());
+    }
+
+    @Test
+    void bugAssignmentRejectsUnauthorizedInactiveIneligibleAndNonProjectUsers() throws Exception {
+        User reporter = createUser(Role.DEVELOPER);
+        User assignedDeveloper = createUser(Role.DEVELOPER);
+        User outsider = createUser(Role.DEVELOPER);
+        User admin = createUser(Role.ADMIN);
+        User inactiveDeveloper = createUser(Role.DEVELOPER);
+        inactiveDeveloper.setActive(false);
+        userRepository.saveAndFlush(inactiveDeveloper);
+        Project project = createProject(admin);
+        project.getMembers().add(reporter);
+        project.getMembers().add(assignedDeveloper);
+        project.getMembers().add(inactiveDeveloper);
+        projectRepository.saveAndFlush(project);
+
+        String reporterToken = jwtService.generateToken(reporter);
+        String createJson = """
+                {
+                  "title":"Assignment validation",
+                  "description":"Assignment validation",
+                  "projectId":%d,
+                  "module":"API",
+                  "environment":"Integration",
+                  "severity":"Medium",
+                  "priority":"Medium",
+                  "assignedTo":%d
+                }
+                """.formatted(project.getId(), assignedDeveloper.getId());
+        mockMvc.perform(post("/api/bugs")
+                        .header("Authorization", "Bearer " + reporterToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createJson))
+                .andExpect(status().isForbidden());
+
+        String adminToken = jwtService.generateToken(admin);
+        String bugJson = createJson.replace("\"assignedTo\":" + assignedDeveloper.getId(), "\"assignedTo\":null");
+        String response = mockMvc.perform(post("/api/bugs")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(bugJson))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long bugId = objectMapper.readTree(response).get("id").asLong();
+
+        mockMvc.perform(patch("/api/bugs/{id}/assignment", bugId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"assignedTo\":%d}".formatted(inactiveDeveloper.getId())))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(patch("/api/bugs/{id}/assignment", bugId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"assignedTo\":%d}".formatted(admin.getId())))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(patch("/api/bugs/{id}/assignment", bugId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"assignedTo\":%d}".formatted(outsider.getId())))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(patch("/api/bugs/{id}/assignment", bugId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"assignedTo\":%d}".formatted(assignedDeveloper.getId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assignedTo").value(assignedDeveloper.getId()));
+        mockMvc.perform(patch("/api/bugs/{id}/assignment", bugId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"assignedTo\":null}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assignedTo").value(org.hamcrest.Matchers.nullValue()));
+    }
+
+    @Test
+    void teamLeadCanTriageOnlyBugsInTheirTeamProject() throws Exception {
+        User manager = createUser(Role.PROJECT_MANAGER);
+        User teamLead = createUser(Role.TEAM_LEAD);
+        User unrelatedTeamLead = createUser(Role.TEAM_LEAD);
+        User developer = createUser(Role.DEVELOPER);
+        Project project = createProject(manager);
+        project.getMembers().add(developer);
+
+        Team team = new Team();
+        team.setName("Bug workflow team");
+        team.setTeamCode("BT-" + UUID.randomUUID().toString().substring(0, 8));
+        team.setProject(project);
+        team = teamRepository.saveAndFlush(team);
+        project.setTeam(team);
+        projectRepository.saveAndFlush(project);
+
+        TeamMember membership = new TeamMember();
+        membership.setTeam(team);
+        membership.setUser(teamLead);
+        membership.setTeamRole("Team Lead");
+        teamMemberRepository.saveAndFlush(membership);
+
+        String managerToken = jwtService.generateToken(manager);
+        String leadToken = jwtService.generateToken(teamLead);
+        String unrelatedLeadToken = jwtService.generateToken(unrelatedTeamLead);
+        String bugResponse = mockMvc.perform(post("/api/bugs")
+                        .header("Authorization", "Bearer " + managerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "title":"Team lead workflow",
+                                  "description":"Team lead workflow",
+                                  "projectId":%d,
+                                  "module":"API",
+                                  "environment":"Test",
+                                  "severity":"Medium",
+                                  "priority":"Medium",
+                                  "assignedTo":%d
+                                }
+                                """.formatted(project.getId(), developer.getId())))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long bugId = objectMapper.readTree(bugResponse).get("id").asLong();
+
+        mockMvc.perform(patch("/api/bugs/{id}/status", bugId)
+                        .header("Authorization", "Bearer " + unrelatedLeadToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"Triaged\"}"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(patch("/api/bugs/{id}/status", bugId)
+                        .header("Authorization", "Bearer " + leadToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"Triaged\"}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(patch("/api/bugs/{id}/status", bugId)
+                        .header("Authorization", "Bearer " + leadToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"Assigned\"}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(patch("/api/bugs/{id}/status", bugId)
+                        .header("Authorization", "Bearer " + leadToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"In Progress\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void bugEditingAndDeletionAreScopedAndRecordFieldChanges() throws Exception {
+        User manager = createUser(Role.PROJECT_MANAGER);
+        User reporter = createUser(Role.DEVELOPER);
+        User otherMember = createUser(Role.TESTER);
+        Project project = createProject(manager);
+        project.getMembers().add(reporter);
+        project.getMembers().add(otherMember);
+        projectRepository.saveAndFlush(project);
+
+        String reporterToken = jwtService.generateToken(reporter);
+        String managerToken = jwtService.generateToken(manager);
+        String otherToken = jwtService.generateToken(otherMember);
+        String createResponse = mockMvc.perform(post("/api/bugs")
+                        .header("Authorization", "Bearer " + reporterToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "title":"Editable report",
+                                  "description":"Before edit",
+                                  "projectId":%d,
+                                  "module":"API",
+                                  "environment":"Test",
+                                  "severity":"Low",
+                                  "priority":"Low"
+                                }
+                                """.formatted(project.getId())))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long bugId = objectMapper.readTree(createResponse).get("id").asLong();
+        String updateJson = """
+                {
+                  "title":"Updated report",
+                  "description":"After edit",
+                  "module":"API",
+                  "environment":"Test",
+                  "severity":"High",
+                  "priority":"High"
+                }
+                """;
+
+        mockMvc.perform(put("/api/bugs/{id}", bugId)
+                        .header("Authorization", "Bearer " + otherToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(updateJson))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(put("/api/bugs/{id}", bugId)
+                        .header("Authorization", "Bearer " + reporterToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(updateJson))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("Updated report"));
+        mockMvc.perform(put("/api/bugs/{id}", bugId)
+                        .header("Authorization", "Bearer " + reporterToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(updateJson.replace("\"priority\":\"High\"", "\"priority\":\"High\",\"assignedTo\":null")))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .delete("/api/bugs/{id}", bugId)
+                        .header("Authorization", "Bearer " + reporterToken))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/bugs/{id}/activity", bugId)
+                        .header("Authorization", "Bearer " + managerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[*].type", org.hamcrest.Matchers.hasItem("update")));
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .delete("/api/bugs/{id}", bugId)
+                        .header("Authorization", "Bearer " + managerToken))
+                .andExpect(status().isNoContent());
     }
 
     @Test

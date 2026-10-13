@@ -7,7 +7,7 @@ import {
   PiWrench,
 } from "react-icons/pi";
 import axios, { getApiBase } from "../../../services/api.js";
-import { avatarColor, getInitials } from "../utils/BugHelpers.js";
+import { avatarColor, getInitials } from "../utils/bugHelpers.js";
 
 const API_BASE = getApiBase();
 const TASKS_API = `${API_BASE}/tasks`;
@@ -19,7 +19,8 @@ const periods = [
   { id: "all", label: "All time", days: null },
 ];
 
-const RESOLVED = ["Fixed", "Retest", "Closed"];
+const CLOSED = "Closed";
+const FIXED = ["Fixed", "Retest", "Closed"];
 const DONE = ["done", "completed", "complete", "closed", "finished"];
 
 const sameId = (a, b) =>
@@ -161,10 +162,10 @@ const DeveloperPerformance = ({
 
     const bugsFixed = mine.filter(
       (bug) =>
-        RESOLVED.includes(bug.status) && inPeriod(bug.updatedAt ?? bug.createdAt)
+        FIXED.includes(bug.status) && inPeriod(bug.updatedAt ?? bug.createdAt)
     ).length;
 
-    const openBugs = mine.filter((bug) => !RESOLVED.includes(bug.status)).length;
+    const openBugs = mine.filter((bug) => bug.status !== CLOSED).length;
 
     let tasksAssigned = null;
     let tasksCompleted = null;
@@ -202,10 +203,10 @@ const DeveloperPerformance = ({
         ...dev,
         fixed: mine.filter(
           (bug) =>
-            RESOLVED.includes(bug.status) &&
+            FIXED.includes(bug.status) &&
             inPeriod(bug.updatedAt ?? bug.createdAt)
         ).length,
-        open: mine.filter((bug) => !RESOLVED.includes(bug.status)).length,
+        open: mine.filter((bug) => bug.status !== CLOSED).length,
       };
     });
 

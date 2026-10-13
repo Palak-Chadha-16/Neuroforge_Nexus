@@ -156,7 +156,7 @@ public class BugReportController {
     @PatchMapping("/{id}/assignment")
     public ResponseEntity<BugReportResponse> updateAssignment(
             @PathVariable Long id,
-            @RequestBody UpdateAssignmentRequest request
+            @Valid @RequestBody UpdateAssignmentRequest request
     ) {
 
         return ResponseEntity.ok(

@@ -27,28 +27,32 @@ import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.Set;
+import java.util.Map;
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
 @Transactional
 public class BugReportService {
 
-    /*
-     * Status groups used by role rules.
-     * Values are normalized (lowercase, letters/digits only),
-     * so "In Progress", "in_progress" and "inprogress" all match.
-     * Adjust these if your frontend uses different status names.
-     */
-    private static final Set<String> DEV_STATUSES =
-            Set.of("inprogress", "fixed", "resolved", "readyforretest", "readyfortesting");
-
-    private static final Set<String> TESTER_STATUSES =
-            Set.of("verified", "reopened", "closed", "retesting", "retest");
+    private static final Set<String> STATUSES = Set.of(
+            "New", "Triaged", "Assigned", "In Progress", "Fixed", "Retest", "Reopened", "Closed");
+    private static final Map<String, Set<String>> STATUS_TRANSITIONS = Map.of(
+            "New", Set.of("Triaged"),
+            "Triaged", Set.of("Assigned"),
+            "Assigned", Set.of("In Progress"),
+            "In Progress", Set.of("Fixed"),
+            "Fixed", Set.of("Retest"),
+            "Retest", Set.of("Closed", "Reopened"),
+            "Reopened", Set.of("In Progress"),
+            "Closed", Set.of("Reopened"));
 
     private final BugReportRepository bugReportRepository;
     private final BugReportActivityRepository activityRepository;
@@ -177,15 +181,16 @@ public class BugReportService {
 
         accessService.assertCanView(user, project);
 
-        Long assignedTo = canAssign(user, project)
-                ? request.assignedTo()
-                : null;
+        if (request.assignedTo() != null && !canAssign(user, project)) {
+            throw new AccessDeniedException("You cannot assign bugs in this project");
+        }
+        Long assignedTo = request.assignedTo();
 
         validateAssignment(assignedTo, project);
 
         BugReport bug = new BugReport();
 
-        bug.setBugKey(generateBugKey());
+        bug.setBugKey("BUG-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12));
         bug.setTitle(request.title().trim());
         bug.setDescription(request.description().trim());
         bug.setProjectId(project.getId());
@@ -204,8 +209,17 @@ public class BugReportService {
         bug.setAssignedTo(assignedTo);
         bug.setAttachments(request.attachments());
 
-        BugReport saved = bugReportRepository.save(bug);
+        BugReport saved = bugReportRepository.saveAndFlush(bug);
+        String bugKey = "BUG-" + saved.getId();
+        if (bugReportRepository.existsByBugKey(bugKey)) {
+            bugKey = "BUG-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        }
+        saved.setBugKey(bugKey);
+        saved = bugReportRepository.save(saved);
         logActivity(saved, "created", "reported this bug", null);
+        if (assignedTo != null) {
+            logAssignmentActivity(saved, assignedTo);
+        }
         return toResponse(saved);
     }
 
@@ -231,30 +245,42 @@ public class BugReportService {
 
         assertCanEdit(user, project, bug);
 
+        List<String> changedFields = new java.util.ArrayList<>();
+        if (!bug.getTitle().equals(request.title().trim())) changedFields.add("title");
+        if (!bug.getDescription().equals(request.description().trim())) changedFields.add("description");
+        if (!bug.getModule().equals(request.module().trim())) changedFields.add("module");
+        if (!bug.getEnvironment().equals(request.environment().trim())) changedFields.add("environment");
+        if (!bug.getSeverity().equals(request.severity().trim())) changedFields.add("severity");
+        if (!bug.getPriority().equals(request.priority().trim())) changedFields.add("priority");
+
         bug.setTitle(request.title().trim());
         bug.setDescription(request.description().trim());
         bug.setModule(request.module().trim());
         bug.setEnvironment(request.environment().trim());
         bug.setSeverity(request.severity().trim());
         bug.setPriority(request.priority().trim());
-        bug.setAttachments(request.attachments());
 
-        // Assignment is untouched unless the user is allowed to assign.
-        if (canAssign(user, project)) {
+        if (request.assignedToProvided() && canAssign(user, project)) {
             validateAssignment(request.assignedTo(), project);
-            bug.setAssignedTo(request.assignedTo());
+            if (!java.util.Objects.equals(bug.getAssignedTo(), request.assignedTo())) {
+                bug.setAssignedTo(request.assignedTo());
+                logAssignmentActivity(bug, request.assignedTo());
+            }
+        } else if (request.assignedToProvided()) {
+            throw new AccessDeniedException("You cannot assign bugs in this project");
         }
 
         BugReport saved = bugReportRepository.save(bug);
-        logActivity(saved, "status", "updated the bug details", null);
+        if (!changedFields.isEmpty()) {
+            logActivity(saved, "update", "updated " + String.join(", ", changedFields), null);
+        }
         return toResponse(saved);
     }
 
     /**
      * Update bug status.
-     * Managers: any status.
-     * Developer/Team Member: fix statuses, only on bugs assigned to them.
-     * Tester/QA: verify/close statuses, only inside their project.
+     * Every role follows the canonical transition graph; permissions determine
+     * which edges each role may use.
      */
     public BugReportResponse updateStatus(
             Long id,
@@ -267,19 +293,35 @@ public class BugReportService {
 
         Project project = getProject(bug.getProjectId());
 
-        assertCanChangeStatus(user, project, bug, request.status());
-
-        String previousStatus = bug.getStatus();
-        bug.setStatus(request.status().trim());
-
-        if (request.retestResult() != null) {
-            bug.setRetestResult(request.retestResult().trim());
+        accessService.assertCanView(user, project);
+        String nextStatus = request.status().trim();
+        if (!STATUSES.contains(nextStatus)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported bug status");
         }
 
+        String previousStatus = bug.getStatus();
+        if (!STATUS_TRANSITIONS.getOrDefault(previousStatus, Set.of()).contains(nextStatus)) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Bug status cannot transition from " + previousStatus + " to " + nextStatus);
+        }
+        assertCanChangeStatus(user, project, bug, previousStatus, nextStatus, request.retestResult());
+
+        String result = request.retestResult();
+        boolean completingRetest = "Retest".equals(previousStatus)
+                && ("Closed".equals(nextStatus) || "Reopened".equals(nextStatus));
+        if (completingRetest) {
+            bug.setRetestResult(result);
+        } else {
+            bug.setRetestResult(null);
+        }
+        bug.setStatus(nextStatus);
+
         BugReport saved = bugReportRepository.save(bug);
-        String activityText = "moved this bug from " + previousStatus + " to " + saved.getStatus();
-        String type = request.retestResult() == null ? "status" : "retest";
-        logActivity(saved, type, activityText, request.retestResult());
+        String activityText = completingRetest
+                ? "recorded a " + result.toLowerCase() + " retest and moved this bug to " + nextStatus
+                : "moved this bug from " + previousStatus + " to " + saved.getStatus();
+        logActivity(saved, completingRetest ? "retest" : "status", activityText, completingRetest ? result : null);
         return toResponse(saved);
     }
 
@@ -302,14 +344,12 @@ public class BugReportService {
 
         validateAssignment(request.assignedTo(), project);
 
+        if (java.util.Objects.equals(bug.getAssignedTo(), request.assignedTo())) {
+            return toResponse(bug);
+        }
         bug.setAssignedTo(request.assignedTo());
         BugReport saved = bugReportRepository.save(bug);
-        String assignee = request.assignedTo() == null
-                ? "Unassigned"
-                : userRepository.findById(request.assignedTo())
-                        .map(User::getFullName)
-                        .orElse("a project member");
-        logActivity(saved, "status", "assigned this bug to " + assignee, null);
+        logAssignmentActivity(saved, request.assignedTo());
         return toResponse(saved);
     }
 
@@ -373,35 +413,53 @@ public class BugReportService {
             AuthUser user,
             Project project,
             BugReport bug,
-            String newStatus
+            String previousStatus,
+            String newStatus,
+            String retestResult
     ) {
-
-        if (accessService.canManage(user, project)) {
-            return;
+        boolean completingRetest = "Retest".equals(previousStatus)
+                && ("Closed".equals(newStatus) || "Reopened".equals(newStatus));
+        if (retestResult != null && !Set.of("Passed", "Failed").contains(retestResult)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Retest result must be Passed or Failed");
+        }
+        if (completingRetest) {
+            if (retestResult == null || !Set.of("Passed", "Failed").contains(retestResult)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A retest result is required");
+            }
+            if (("Closed".equals(newStatus) && !"Passed".equals(retestResult))
+                    || ("Reopened".equals(newStatus) && !"Failed".equals(retestResult))) {
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_REQUEST, "Retest result does not match the requested status");
+            }
+        } else if (retestResult != null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Retest results are only valid when completing a retest");
         }
 
-        String status = normalize(newStatus);
+        if (accessService.canManage(user, project)) return;
         Role role = user.role();
-
-        if ((role == Role.DEVELOPER || role == Role.TEAM_MEMBER)
-                && user.userId().equals(bug.getAssignedTo())
-                && DEV_STATUSES.contains(status)) {
+        if (role == Role.TEAM_LEAD && accessService.isTeamLead(project, user.userId())
+                && (("New".equals(previousStatus) && "Triaged".equals(newStatus))
+                || ("Triaged".equals(previousStatus) && "Assigned".equals(newStatus)))) {
             return;
         }
-
+        if ((role == Role.DEVELOPER || role == Role.TEAM_MEMBER)
+                && accessService.isMember(project, user.userId())
+                && user.userId().equals(bug.getAssignedTo())
+                && (("Assigned".equals(previousStatus) && "In Progress".equals(newStatus))
+                || ("In Progress".equals(previousStatus) && "Fixed".equals(newStatus))
+                || ("Reopened".equals(previousStatus) && "In Progress".equals(newStatus)))) {
+            return;
+        }
         if ((role == Role.TESTER || role == Role.QA)
                 && accessService.isMember(project, user.userId())
-                && TESTER_STATUSES.contains(status)) {
+                && (("Fixed".equals(previousStatus) && "Retest".equals(newStatus))
+                || ("Retest".equals(previousStatus)
+                && ("Closed".equals(newStatus) || "Reopened".equals(newStatus)))
+                || ("Closed".equals(previousStatus) && "Reopened".equals(newStatus)))) {
             return;
         }
 
-        throw new AccessDeniedException("Your role cannot set this status");
-    }
-
-    private static String normalize(String value) {
-        return value == null
-                ? ""
-                : value.replaceAll("[^A-Za-z0-9]", "").toLowerCase();
+        throw new AccessDeniedException("Your role cannot move this bug from " + previousStatus + " to " + newStatus);
     }
 
     /**
@@ -416,6 +474,14 @@ public class BugReportService {
             return;
         }
 
+        User assignee = userRepository.findById(assignedTo)
+                .orElseThrow(() -> new EntityNotFoundException("Assigned user not found: " + assignedTo));
+        if (!assignee.isActive()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Assigned user must be active");
+        }
+        if (!assignee.getRole().isExecutionRole()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Assigned user must have an execution role");
+        }
         if (!accessService.isMember(project, assignedTo)) {
             throw new AccessDeniedException(
                     "The assigned user is not a member of this project"
@@ -426,24 +492,6 @@ public class BugReportService {
     // ------------------------------------------------------------------
     // INTERNAL HELPERS
     // ------------------------------------------------------------------
-
-    /**
-     * Generate a readable bug key: BUG-1, BUG-2, BUG-3 ...
-     */
-    private String generateBugKey() {
-
-        long nextId = bugReportRepository.count() + 1;
-
-        String bugKey = "BUG-" + nextId;
-
-        // Protect against gaps/collisions after deletions.
-        while (bugReportRepository.existsByBugKey(bugKey)) {
-            nextId++;
-            bugKey = "BUG-" + nextId;
-        }
-
-        return bugKey;
-    }
 
     private Project getProject(Long projectId) {
 
@@ -501,6 +549,15 @@ public class BugReportService {
         activity.setText(text);
         activity.setResult(result);
         activityRepository.save(activity);
+    }
+
+    private void logAssignmentActivity(BugReport bug, Long assignedTo) {
+        String assignee = assignedTo == null
+                ? "Unassigned"
+                : userRepository.findById(assignedTo)
+                        .map(User::getFullName)
+                        .orElseThrow(() -> new EntityNotFoundException("Assigned user not found: " + assignedTo));
+        logActivity(bug, "assignment", "assigned this bug to " + assignee, null);
     }
 
     private CommentResponse toCommentResponse(BugReportComment comment) {

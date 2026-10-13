@@ -3,7 +3,8 @@ package com.neuroforge.backend.dto;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
-import jakarta.validation.constraints.NotBlank;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonSetter;
 
 import java.time.LocalDateTime;
 
@@ -46,35 +47,60 @@ public final class BugReportDtos {
     ) {
     }
 
-    public record UpdateBugRequest(
+    public static final class UpdateBugRequest {
+        @NotBlank(message = "Title is required")
+        @Size(max = 255, message = "Title cannot exceed 255 characters")
+        private String title;
 
-            @NotBlank(message = "Title is required")
-            @Size(max = 255, message = "Title cannot exceed 255 characters")
-            String title,
+        @NotBlank(message = "Description is required")
+        private String description;
 
-            @NotBlank(message = "Description is required")
-            String description,
+        @NotBlank(message = "Module is required")
+        @Size(max = 255, message = "Module cannot exceed 255 characters")
+        private String module;
 
-            @NotBlank(message = "Module is required")
-            @Size(max = 255, message = "Module cannot exceed 255 characters")
-            String module,
+        @NotBlank(message = "Environment is required")
+        @Size(max = 50, message = "Environment cannot exceed 50 characters")
+        private String environment;
 
-            @NotBlank(message = "Environment is required")
-            @Size(max = 50, message = "Environment cannot exceed 50 characters")
-            String environment,
+        @NotBlank(message = "Severity is required")
+        @Size(max = 20, message = "Severity cannot exceed 20 characters")
+        private String severity;
 
-            @NotBlank(message = "Severity is required")
-            @Size(max = 20, message = "Severity cannot exceed 20 characters")
-            String severity,
+        @NotBlank(message = "Priority is required")
+        @Size(max = 20, message = "Priority cannot exceed 20 characters")
+        private String priority;
 
-            @NotBlank(message = "Priority is required")
-            @Size(max = 20, message = "Priority cannot exceed 20 characters")
-            String priority,
+        private Long assignedTo;
+        private boolean assignedToProvided;
+        private String attachments;
 
-            Long assignedTo,
+        public UpdateBugRequest() {}
 
-            String attachments
-    ) {
+        public String title() { return title; }
+        public String description() { return description; }
+        public String module() { return module; }
+        public String environment() { return environment; }
+        public String severity() { return severity; }
+        public String priority() { return priority; }
+        public Long assignedTo() { return assignedTo; }
+        @JsonIgnore
+        public boolean assignedToProvided() { return assignedToProvided; }
+        public String attachments() { return attachments; }
+
+        public void setTitle(String title) { this.title = title; }
+        public void setDescription(String description) { this.description = description; }
+        public void setModule(String module) { this.module = module; }
+        public void setEnvironment(String environment) { this.environment = environment; }
+        public void setSeverity(String severity) { this.severity = severity; }
+        public void setPriority(String priority) { this.priority = priority; }
+        public void setAttachments(String attachments) { this.attachments = attachments; }
+
+        @JsonSetter("assignedTo")
+        public void setAssignedTo(Long assignedTo) {
+            assignedToProvided = true;
+            this.assignedTo = assignedTo;
+        }
     }
 
     public record UpdateStatusRequest(
