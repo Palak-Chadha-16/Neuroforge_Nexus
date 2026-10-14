@@ -8,7 +8,7 @@ import {
 } from "react-router-dom";
 
 import BugReporting from "./pages/Testing/BugReporting.jsx";
-import DevOpsManagement from "./pages/DevOps/DevOpsManagement.jsx";
+
 
 import { ThemeProvider } from "./context/ThemeContext.jsx";
 import { AuthProvider } from "./context/AuthContext.jsx";
@@ -253,14 +253,7 @@ const AppRoutes = () => {
         )}
       />
 
-      <Route
-        path="/devops"
-        element={protect(
-          <RoleRoute allowedRoles={[ROLES.ADMIN, ROLES.PROJECT_MANAGER, ROLES.PROJECT_LEAD, ROLES.TEAM_LEAD]}>
-            <DevOpsManagement />
-          </RoleRoute>
-        )}
-      />
+      
 
       <Route
         path="/kanban"

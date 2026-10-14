@@ -26,7 +26,7 @@ import { useTasks } from "../../context/TasksContextStore.js";
 import { useAuth } from "../../context/AuthContextStore.js";
 import { ROLES, normalizeRole } from "../../constants/roles.js";
 import ConnectRepoModal from "../../components/project/ConnectRepoModal.jsx";
-import DevOpsPipelineView from "../../components/project/DevOpsPipelineView.jsx";
+
 
 const PROJECT_ROLES = ["Team Lead", "Developer", "Tester", "QA"];
 
@@ -920,17 +920,7 @@ const ProjectWorkspace = () => {
               </span>
             </button>
 
-            <button
-              onClick={() => setActiveSection("devops")}
-              className={`flex items-center gap-2 border-b-2 px-5 py-4 text-sm font-semibold transition ${
-                activeSection === "devops"
-                  ? "border-[#2563EB] text-[#2563EB] dark:border-blue-500 dark:text-blue-400"
-                  : "border-transparent text-[#64748B] hover:text-[#172033] dark:text-slate-400 dark:hover:text-white"
-              }`}
-            >
-              <PiRocket size={16} />
-              <span>DevOps &amp; CI/CD</span>
-            </button>
+            
           </div>
         </div>
 
@@ -1756,13 +1746,7 @@ const ProjectWorkspace = () => {
           </div>
         )}
 
-        {activeSection === "devops" && (
-          <DevOpsPipelineView
-            project={project}
-            canTriggerPipeline={canTriggerPipeline}
-            onConnectRepo={() => setShowConnectRepo(true)}
-          />
-        )}
+        
       </div>
 
       {showEditProject && (

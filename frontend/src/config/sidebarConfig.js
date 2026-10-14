@@ -75,17 +75,7 @@ ROLES.TEAM_LEAD,
 ...MEMBER_ROLES,
 ],
 },
-{
-label: "DevOps",
-path: "/devops",
-icon: PiRocket,
-roles: [
-ROLES.ADMIN,
-ROLES.PROJECT_MANAGER,
-ROLES.PROJECT_LEAD,
-ROLES.TEAM_LEAD,
-],
-},
+
 {
 label: "Teams",
 path: "/teams",
