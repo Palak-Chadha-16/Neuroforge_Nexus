@@ -105,7 +105,7 @@ const severityClass = {
   Project color palette (no red/rose: red is reserved for danger/alerts).
   - dot:   small color marker
   - solid: filled button (Open Project)
-  - soft:  tinted button (Open Linked Task)
+  - soft:  tinted button (Open Task)
 */
 const projectPalette = [
   {
@@ -418,6 +418,18 @@ const BugReporting = () => {
     navigate(`/projects/${projectId}`);
   };
 
+  // Id of the task linked to the selected bug (supports both field names)
+  const linkedTaskId = selectedBug?.taskId ?? selectedBug?.linkedTaskId;
+  const hasLinkedTask =
+    linkedTaskId !== undefined && linkedTaskId !== null && linkedTaskId !== "";
+
+  const openLinkedTask = () => {
+    if (!hasLinkedTask) return;
+    closeDetails();
+    // Change this route if your task page uses a different path
+    navigate(`/tasks/${linkedTaskId}`);
+  };
+
   const getProject = (projectId) =>
     projects.find((project) => String(project.id) === String(projectId));
 
@@ -628,8 +640,7 @@ const BugReporting = () => {
     },
     {
       label: "Open Bugs",
-      value: bugs.filter((bug) => bug.status !== CLOSED)
-        .length,
+      value: bugs.filter((bug) => bug.status !== CLOSED).length,
       icon: PiClock,
       iconClass: "text-orange-500",
     },
@@ -1236,7 +1247,6 @@ const BugReporting = () => {
                     className="w-full rounded-lg border border-gray-200 bg-gray-100 px-4 py-2.5 text-sm text-gray-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-400"
                   />
                 </div>
-
               </div>
 
               <div className="flex justify-end gap-3 border-t border-gray-200 pt-5 dark:border-gray-700">
@@ -1571,9 +1581,9 @@ const BugReporting = () => {
 
                     <div className="flex flex-wrap items-center gap-2">
                       {workflow.map((stage) => {
-                        const active =
-                          selectedBug.status === stage;
-                        const allowed = !active &&
+                        const active = selectedBug.status === stage;
+                        const allowed =
+                          !active &&
                           selectedBug.status !== "Retest" &&
                           canTransitionBug(selectedBug, stage);
 
@@ -1588,15 +1598,16 @@ const BugReporting = () => {
                                 {stage}
                               </button>
                             ) : (
-                              <span className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
-                                active
-                                  ? "bg-gray-900 text-white dark:bg-white dark:text-gray-900"
-                                  : "bg-gray-50 text-gray-400 dark:bg-gray-800 dark:text-gray-500"
-                              }`}>
+                              <span
+                                className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
+                                  active
+                                    ? "bg-gray-900 text-white dark:bg-white dark:text-gray-900"
+                                    : "bg-gray-50 text-gray-400 dark:bg-gray-800 dark:text-gray-500"
+                                }`}
+                              >
                                 {stage}
                               </span>
                             )}
-
                           </div>
                         );
                       })}
@@ -1605,50 +1616,50 @@ const BugReporting = () => {
 
                   {selectedBug.status === "Reopened" &&
                     canTransitionBug(selectedBug, "In Progress") && (
-                    <div className="rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-500/20 dark:bg-red-500/10">
-                      <p className="text-sm font-semibold text-red-800 dark:text-red-300">
-                        Bug Reopened
-                      </p>
-                      <p className="mt-1 text-xs text-red-700 dark:text-red-400">
-                        The retest failed. Move the bug back to In Progress for
-                        another fix.
-                      </p>
-                    </div>
-                  )}
+                      <div className="rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-500/20 dark:bg-red-500/10">
+                        <p className="text-sm font-semibold text-red-800 dark:text-red-300">
+                          Bug Reopened
+                        </p>
+                        <p className="mt-1 text-xs text-red-700 dark:text-red-400">
+                          The retest failed. Move the bug back to In Progress for
+                          another fix.
+                        </p>
+                      </div>
+                    )}
 
                   {selectedBug.status === "Retest" &&
                     (canTransitionBug(selectedBug, "Closed") ||
                       canTransitionBug(selectedBug, "Reopened")) && (
-                    <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-4 dark:border-yellow-500/20 dark:bg-yellow-500/10">
-                      <p className="text-sm font-semibold text-yellow-800 dark:text-yellow-300">
-                        Retest Required
-                      </p>
-                      <p className="mt-1 text-xs text-yellow-700 dark:text-yellow-400">
-                        Select the result after testing the developer&apos;s
-                        fix.
-                      </p>
+                      <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-4 dark:border-yellow-500/20 dark:bg-yellow-500/10">
+                        <p className="text-sm font-semibold text-yellow-800 dark:text-yellow-300">
+                          Retest Required
+                        </p>
+                        <p className="mt-1 text-xs text-yellow-700 dark:text-yellow-400">
+                          Select the result after testing the developer&apos;s
+                          fix.
+                        </p>
 
-                      <div className="mt-4 flex gap-3">
-                        <button
-                          type="button"
-                          onClick={() => handleRetest(selectedBug.id, "Passed")}
-                          disabled={!canTransitionBug(selectedBug, "Closed")}
-                          className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700"
-                        >
-                          Passed
-                        </button>
+                        <div className="mt-4 flex gap-3">
+                          <button
+                            type="button"
+                            onClick={() => handleRetest(selectedBug.id, "Passed")}
+                            disabled={!canTransitionBug(selectedBug, "Closed")}
+                            className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Passed
+                          </button>
 
-                        <button
-                          type="button"
-                          onClick={() => handleRetest(selectedBug.id, "Failed")}
-                          disabled={!canTransitionBug(selectedBug, "Reopened")}
-                          className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
-                        >
-                          Failed
-                        </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRetest(selectedBug.id, "Failed")}
+                            disabled={!canTransitionBug(selectedBug, "Reopened")}
+                            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Failed
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    )}
 
                   {selectedBug.retestResult && (
                     <div className="rounded-lg bg-gray-50 p-4 dark:bg-gray-700/50">
@@ -1670,10 +1681,10 @@ const BugReporting = () => {
                   {selectedBug.attachments?.length > 0 && (
                     <div>
                       <p className="text-sm font-semibold text-gray-900 dark:text-white">
-                    Stored attachment references
+                        Stored attachment references
                       </p>
                       <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    These names were saved without uploading file contents.
+                        These names were saved without uploading file contents.
                       </p>
 
                       <div className="mt-3 space-y-2">
@@ -1711,7 +1722,9 @@ const BugReporting = () => {
                 </div>
               )}
 
+              {/* Footer actions */}
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 pt-5 dark:border-gray-700">
+                {/* Navigation buttons */}
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
@@ -1723,11 +1736,19 @@ const BugReporting = () => {
                     <PiArrowRight size={16} />
                   </button>
 
-                  <span className="self-center text-xs text-gray-500 dark:text-gray-400">
-                    Task linking is not supported for bug reports.
-                  </span>
+                  <button
+                    type="button"
+                    onClick={openLinkedTask}
+                    disabled={!hasLinkedTask}
+                    title={hasLinkedTask ? "Open linked task" : "No task linked to this bug"}
+                    className={`${linkBtnBase} ${selectedColor.soft}`}
+                  >
+                    Open Task
+                    <PiArrowRight size={16} />
+                  </button>
                 </div>
 
+                {/* Action buttons */}
                 <div className="flex flex-wrap gap-2">
                   {canManageBug(selectedProject) && (
                     <button
@@ -1750,7 +1771,6 @@ const BugReporting = () => {
                       <PiArrowRight size={17} />
                     </button>
                   )}
-
                 </div>
               </div>
             </div>
