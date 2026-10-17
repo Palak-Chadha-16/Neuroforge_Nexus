@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   PiArrowRight,
   PiBug,
@@ -13,6 +13,7 @@ import {
   PiXCircle,
 } from "react-icons/pi";
 import { AuthContext } from "../../context/AuthContextStore.js";
+import { useTasks } from "../../context/TasksContextStore.js";
 import axios, { getApiBase } from "../../services/api.js";
 import BugActivityTimeline from "./components/BugActivityTimeline.jsx";
 import BugAISummary from "./components/BugAISummary.jsx";
@@ -184,6 +185,7 @@ const initialForm = {
   title: "",
   description: "",
   projectId: "",
+  taskId: "",
   module: "",
   environment: "Development",
   severity: "Medium",
@@ -222,9 +224,25 @@ const STATUS_TRANSITIONS = {
   Closed: ["Reopened"],
 };
 
+// Reads the linked task id from whichever field the backend returns
+const readTaskId = (bug) => {
+  const value =
+    bug?.taskId ?? bug?.task_id ?? bug?.linkedTaskId ?? bug?.task?.id;
+  return value === undefined || value === null || value === ""
+    ? null
+    : value;
+};
+
+const getTaskLabel = (task) =>
+  task?.title || task?.name || `Task #${task?.id}`;
+
+const getTaskProjectId = (task) => task?.projectId ?? task?.project?.id;
+
 const BugReporting = () => {
   const { currentUser } = useContext(AuthContext);
+  const { tasks = [] } = useTasks();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [bugs, setBugs] = useState([]);
   const [projects, setProjects] = useState([]);
@@ -267,6 +285,11 @@ const BugReporting = () => {
   const formProject = projects.find(
     (project) => String(project.id) === String(form.projectId)
   );
+  const formTasks = form.projectId
+    ? tasks.filter(
+        (task) => String(getTaskProjectId(task)) === String(form.projectId)
+      )
+    : [];
   const currentRole = normalizeRole(currentUser?.role);
   const getProjectMembers = (project) => [
     ...(project?.members || []),
@@ -418,16 +441,19 @@ const BugReporting = () => {
     navigate(`/projects/${projectId}`);
   };
 
-  // Id of the task linked to the selected bug (supports both field names)
-  const linkedTaskId = selectedBug?.taskId ?? selectedBug?.linkedTaskId;
-  const hasLinkedTask =
-    linkedTaskId !== undefined && linkedTaskId !== null && linkedTaskId !== "";
+  // Linked task of the selected bug
+  const linkedTaskId = readTaskId(selectedBug);
+  const hasLinkedTask = linkedTaskId !== null;
+  const linkedTask = hasLinkedTask
+    ? tasks.find((task) => String(task.id) === String(linkedTaskId))
+    : null;
 
+  // Opens the parent task page: /projects/:projectId/tasks/:taskId
   const openLinkedTask = () => {
-    if (!hasLinkedTask) return;
+    const projectId = selectedBug?.projectId ?? getTaskProjectId(linkedTask);
+    if (!hasLinkedTask || !projectId) return;
     closeDetails();
-    // Change this route if your task page uses a different path
-    navigate(`/tasks/${linkedTaskId}`);
+    navigate(`/projects/${projectId}/tasks/${linkedTaskId}`);
   };
 
   const getProject = (projectId) =>
@@ -464,6 +490,7 @@ const BugReporting = () => {
   function normalizeBug(bug) {
     return {
       ...bug,
+      taskId: readTaskId(bug),
       project: getProject(bug.projectId)?.name || `Project #${bug.projectId}`,
       reportedBy: getUserName(bug.reportedBy),
       assignedTo: getUserName(bug.assignedTo),
@@ -556,6 +583,25 @@ const BugReporting = () => {
       active = false;
     };
   }, [loadData]);
+
+  // Report a bug directly from a task page:
+  // navigate("/bugs", { state: { reportBugForTask: { taskId, projectId, title } } })
+  const prefill = location.state?.reportBugForTask;
+  useEffect(() => {
+    if (!prefill || loading || projects.length === 0) return;
+
+    setForm({
+      ...initialForm,
+      projectId:
+        prefill.projectId != null ? String(prefill.projectId) : "",
+      taskId: prefill.taskId != null ? String(prefill.taskId) : "",
+      title: prefill.title ? `Bug in task: ${prefill.title}` : "",
+    });
+    setShowReportModal(true);
+
+    // Clear the router state so the modal doesn't reopen on refresh
+    navigate(location.pathname, { replace: true, state: null });
+  }, [prefill, loading, projects.length, navigate, location.pathname]);
 
   const selectedBugId = selectedBug?.id;
   useEffect(() => {
@@ -664,7 +710,8 @@ const BugReporting = () => {
     setForm((current) => ({
       ...current,
       [name]: value,
-      ...(name === "projectId" ? { assignedToId: "" } : {}),
+      // Changing the project clears the assignee and the linked task
+      ...(name === "projectId" ? { assignedToId: "", taskId: "" } : {}),
     }));
   };
 
@@ -694,6 +741,7 @@ const BugReporting = () => {
         title: form.title.trim(),
         description: form.description.trim(),
         projectId: Number(form.projectId),
+        taskId: form.taskId ? Number(form.taskId) : null,
         module: form.module.trim(),
         environment: form.environment,
         severity: form.severity,
@@ -1157,6 +1205,28 @@ const BugReporting = () => {
                 </div>
 
                 <div>
+                  <label className={labelClass}>Linked Task (optional)</label>
+                  <select
+                    name="taskId"
+                    value={form.taskId}
+                    onChange={handleInputChange}
+                    disabled={!form.projectId}
+                    className={`${fieldClass} disabled:cursor-not-allowed disabled:opacity-60`}
+                  >
+                    <option value="">
+                      {form.projectId
+                        ? "No linked task"
+                        : "Select a project first"}
+                    </option>
+                    {formTasks.map((task) => (
+                      <option key={task.id} value={task.id}>
+                        {getTaskLabel(task)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
                   <label className={labelClass}>Module / Feature</label>
                   <input
                     type="text"
@@ -1457,7 +1527,7 @@ const BugReporting = () => {
                     activity={mergedActivity}
                   />
 
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
                     <div className="rounded-lg bg-gray-50 p-4 dark:bg-gray-700/50">
                       <p className="text-xs text-gray-500 dark:text-gray-400">
                         Project
@@ -1467,6 +1537,19 @@ const BugReporting = () => {
                           className={`h-2.5 w-2.5 shrink-0 rounded-full ${selectedColor.dot}`}
                         />
                         {selectedBug.project}
+                      </p>
+                    </div>
+
+                    <div className="rounded-lg bg-gray-50 p-4 dark:bg-gray-700/50">
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        Linked Task
+                      </p>
+                      <p className="mt-1 text-sm font-semibold text-gray-800 dark:text-gray-200">
+                        {hasLinkedTask
+                          ? linkedTask
+                            ? getTaskLabel(linkedTask)
+                            : `Task #${linkedTaskId}`
+                          : "None"}
                       </p>
                     </div>
 
@@ -1739,8 +1822,12 @@ const BugReporting = () => {
                   <button
                     type="button"
                     onClick={openLinkedTask}
-                    disabled={!hasLinkedTask}
-                    title={hasLinkedTask ? "Open linked task" : "No task linked to this bug"}
+                    disabled={!hasLinkedTask || !selectedBug.projectId}
+                    title={
+                      hasLinkedTask
+                        ? "Open linked task"
+                        : "No task linked to this bug"
+                    }
                     className={`${linkBtnBase} ${selectedColor.soft}`}
                   >
                     Open Task

@@ -7,9 +7,6 @@ import {
   useNavigate,
 } from "react-router-dom";
 
-import BugReporting from "./pages/Testing/BugReporting.jsx";
-
-
 import { ThemeProvider } from "./context/ThemeContext.jsx";
 import { AuthProvider } from "./context/AuthContext.jsx";
 import { useAuth } from "./context/AuthContextStore.js";
@@ -46,6 +43,7 @@ import SubtaskCalendar from "./components/Subtask/SubtaskCalendar.jsx";
 import GlobalCalendar from "./pages/Calendar/GlobalCalendar.jsx";
 import MyTask from "./pages/Mytask/MyTask.jsx";
 import KanbanBoard from "./components/KanbanBoard/KanbanBoard.jsx";
+import BugReporting from "./pages/Testing/BugReporting.jsx";
 
 import Settings from "./pages/Settings/Settings.jsx";
 import AdminSettings from "./pages/Settings/AdminSettings.jsx";
@@ -244,6 +242,7 @@ const AppRoutes = () => {
         )}
       />
 
+      {/* Bug Reporting page: Report Bug buttons navigate here with router state */}
       <Route
         path="/testing"
         element={protect(
@@ -252,8 +251,6 @@ const AppRoutes = () => {
           </RoleRoute>
         )}
       />
-
-      
 
       <Route
         path="/kanban"

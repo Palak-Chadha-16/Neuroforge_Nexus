@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import {
+  PiBug,
   PiCheckCircle,
   PiCalendarBlank,
   PiUserCircle,
@@ -11,6 +12,12 @@ import {
 import { useTasks } from "../../context/TasksContextStore.js";
 import { useProjects } from "../../context/ProjectContextStore.js";
 import { useUsers } from "../../context/UsersContextStore.js";
+import axios, { getApiBase } from "../../services/api.js";
+
+const BUGS_API = `${getApiBase()}/bugs`;
+
+// Bug Reporting page route (as defined in App.jsx)
+const BUGS_ROUTE = "/testing";
 
 const TASK_STATUSES = ["To Do", "In Progress", "Done"];
 
@@ -19,6 +26,21 @@ const priorityColor = {
   High: "border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300",
   Medium: "border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300",
   Low: "border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300",
+};
+
+const severityClass = {
+  Critical: "text-red-600 dark:text-red-400",
+  High: "text-orange-600 dark:text-orange-400",
+  Medium: "text-yellow-600 dark:text-yellow-400",
+  Low: "text-green-600 dark:text-green-400",
+};
+
+const readBugTaskId = (bug) => {
+  const value =
+    bug?.taskId ?? bug?.task_id ?? bug?.linkedTaskId ?? bug?.task?.id;
+  return value === undefined || value === null || value === ""
+    ? null
+    : value;
 };
 
 const ParentTaskDetailsPage = () => {
@@ -35,6 +57,36 @@ const ParentTaskDetailsPage = () => {
 
   const [status, setStatus] = useState(task?.status || "To Do");
   const [updating, setUpdating] = useState(false);
+  const [linkedBugs, setLinkedBugs] = useState([]);
+  const [bugsLoading, setBugsLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadBugs = async () => {
+      setBugsLoading(true);
+      try {
+        const response = await axios.get(BUGS_API);
+        if (!active) return;
+        const allBugs = Array.isArray(response.data) ? response.data : [];
+        setLinkedBugs(
+          allBugs.filter(
+            (bug) => String(readBugTaskId(bug)) === String(taskId)
+          )
+        );
+      } catch (error) {
+        console.error("Failed to load linked bugs:", error);
+        if (active) setLinkedBugs([]);
+      } finally {
+        if (active) setBugsLoading(false);
+      }
+    };
+
+    loadBugs();
+    return () => {
+      active = false;
+    };
+  }, [taskId]);
 
   if (!task) {
     return (
@@ -70,7 +122,7 @@ const ParentTaskDetailsPage = () => {
     );
   }
 
-    const handleStatusChange = async (e) => {
+  const handleStatusChange = async (e) => {
     const newStatus = e.target.value;
 
     setStatus(newStatus);
@@ -88,6 +140,19 @@ const ParentTaskDetailsPage = () => {
     });
 
     setUpdating(false);
+  };
+
+  // Opens Bug Reporting (/testing) with the report modal pre-filled for this task
+  const handleReportBug = () => {
+    navigate(BUGS_ROUTE, {
+      state: {
+        reportBugForTask: {
+          taskId: task.id,
+          projectId: task.projectId || task.project?.id || projectId,
+          title: task.title,
+        },
+      },
+    });
   };
 
   const assigneeUser =
@@ -138,7 +203,7 @@ const ParentTaskDetailsPage = () => {
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-[#0f172a]">
-        <div className="flex border-b border-slate-200 bg-slate-50 px-6 py-3 dark:border-slate-800 dark:bg-[#0b1120]">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-6 py-3 dark:border-slate-800 dark:bg-[#0b1120]">
           <div className="flex gap-2">
             <button
               type="button"
@@ -155,6 +220,15 @@ const ParentTaskDetailsPage = () => {
               Subtasks ({subtasks.length})
             </Link>
           </div>
+
+          <button
+            type="button"
+            onClick={handleReportBug}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-xs font-semibold text-red-700 transition hover:bg-red-100 dark:border-red-800/60 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950/70"
+          >
+            <PiBug size={16} />
+            Report Bug
+          </button>
         </div>
 
         <div className="p-6 sm:p-8">
@@ -264,6 +338,64 @@ const ParentTaskDetailsPage = () => {
               </div>
             </div>
           </div>
+        </div>
+
+        {/* Linked bugs */}
+        <div className="border-t border-slate-200 dark:border-slate-800">
+          <div className="flex items-center justify-between px-6 py-4 sm:px-8">
+            <h2 className="text-sm font-semibold text-[#172033] dark:text-white">
+              Linked Bugs ({linkedBugs.length})
+            </h2>
+
+            <button
+              type="button"
+              onClick={handleReportBug}
+              className="text-xs font-semibold text-[#2563EB] transition hover:text-[#4F46E5] dark:text-blue-400 dark:hover:text-blue-300"
+            >
+              + Report Bug
+            </button>
+          </div>
+
+          {bugsLoading ? (
+            <p className="px-6 pb-6 text-xs text-slate-500 dark:text-slate-400 sm:px-8">
+              Loading bugs...
+            </p>
+          ) : linkedBugs.length === 0 ? (
+            <p className="px-6 pb-6 text-xs text-slate-500 dark:text-slate-400 sm:px-8">
+              No bugs have been reported for this task.
+            </p>
+          ) : (
+            <ul className="divide-y divide-slate-100 border-t border-slate-100 dark:divide-slate-800 dark:border-slate-800">
+              {linkedBugs.map((bug) => (
+                <li
+                  key={bug.id}
+                  className="flex flex-wrap items-center justify-between gap-3 px-6 py-3 sm:px-8"
+                >
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-[#172033] dark:text-white">
+                      {bug.bugKey || bug.id}
+                    </p>
+                    <p className="mt-0.5 max-w-md truncate text-xs text-slate-500 dark:text-slate-400">
+                      {bug.title}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <span
+                      className={`text-xs font-semibold ${
+                        severityClass[bug.severity] || "text-slate-600"
+                      }`}
+                    >
+                      {bug.severity}
+                    </span>
+                    <span className="rounded-full border border-slate-200 bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                      {bug.status}
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
 
         <div className="flex flex-col gap-3 border-t border-slate-200 dark:border-slate-800 bg-[#F1F5F9] dark:bg-[#111927] px-6 py-4 sm:flex-row sm:items-center sm:justify-between">

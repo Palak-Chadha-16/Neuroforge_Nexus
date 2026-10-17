@@ -1,16 +1,19 @@
 import { useState, useMemo } from "react";
-import { Navigate, Link } from "react-router-dom";
+import { Navigate, Link, useNavigate } from "react-router-dom";
 import {
   PiBriefcase,
   PiUsersThree,
   PiKanban,
   PiCalendarBlank,
+  PiBug,
 } from "react-icons/pi";
 import { useAuth } from "../../context/AuthContextStore.js";
 import { useTasks } from "../../context/TasksContextStore.js";
 import { useProjects } from "../../context/ProjectContextStore.js";
 import { useTeams } from "../../context/TeamsContextStore.js";
 import { ROLES, normalizeRole, formatRole } from "../../constants/roles.js";
+
+const BUGS_ROUTE = "/testing";
 
 const priorityColor = {
   Critical: "border-red-200 bg-red-50 text-red-700 dark:border-red-800/60 dark:bg-red-950/40 dark:text-red-300",
@@ -21,6 +24,7 @@ const priorityColor = {
 
 const MyTask = () => {
   const { currentUser } = useAuth();
+  const navigate = useNavigate();
   const {
     tasks,
     subtasks = [],
@@ -77,6 +81,20 @@ const MyTask = () => {
     if (res && !res.success) {
       alert(res.message || "Failed to update subtask status");
     }
+  };
+
+  // Opens Bug Reporting with the report modal pre-filled for the parent task
+  const handleReportBug = (parentTask) => {
+    if (!parentTask) return;
+    navigate(BUGS_ROUTE, {
+      state: {
+        reportBugForTask: {
+          taskId: parentTask.id,
+          projectId: parentTask.projectId ?? parentTask.project?.id,
+          title: parentTask.title,
+        },
+      },
+    });
   };
 
   const getStatus = (item) => {
@@ -312,7 +330,7 @@ const MyTask = () => {
           className={`rounded-xl px-4 py-2 text-xs font-semibold transition ${
             activeTab === "done"
               ? "bg-[#2563EB] text-white shadow-md shadow-blue-600/20"
-              : "text-[#475569] hover:bg-white hover:text-[#172033]"
+              : "text-slate-600 hover:bg-slate-200/60 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
           }`}
         >
           Completed ({completedCount})
@@ -604,6 +622,15 @@ const MyTask = () => {
                                 </Link>
                               </>
                             )}
+
+                            <button
+                              type="button"
+                              title="Report Bug"
+                              onClick={() => handleReportBug(parentTask)}
+                              className="rounded-lg p-1.5 text-slate-500 transition hover:bg-red-50 hover:text-red-600 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-red-400"
+                            >
+                              <PiBug size={16} />
+                            </button>
                           </div>
                         ) : (
                           <span className="text-xs text-slate-400">
