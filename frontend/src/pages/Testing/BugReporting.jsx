@@ -113,7 +113,7 @@ const projectPalette = [
     dot: "bg-blue-500",
     solid:
       "bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-400",
-    soft: "border border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:border-blue-500/40 dark:bg-blue-500/10 dark:text-blue-300 dark:hover:bg-blue-500/20",
+    soft: "border border-blue-400 bg-blue-100 text-blue-800 hover:bg-blue-200 dark:border-blue-400/50 dark:bg-blue-500/20 dark:text-blue-200 dark:hover:bg-blue-500/30",
   },
   {
     dot: "bg-emerald-500",
@@ -225,16 +225,54 @@ const STATUS_TRANSITIONS = {
 };
 
 // Reads the linked task id from whichever field the backend returns
-const readTaskId = (bug) => {
-  const value =
-    bug?.taskId ?? bug?.task_id ?? bug?.linkedTaskId ?? bug?.task?.id;
-  return value === undefined || value === null || value === ""
-    ? null
-    : value;
+const TASK_LINKS_KEY = "bugTaskLinks";
+
+const loadTaskLinks = () => {
+  try {
+    return JSON.parse(localStorage.getItem(TASK_LINKS_KEY)) || {};
+  } catch {
+    return {};
+  }
 };
 
-const getTaskLabel = (task) =>
-  task?.title || task?.name || `Task #${task?.id}`;
+const saveTaskLink = (bugId, taskId) => {
+  try {
+    const links = loadTaskLinks();
+    links[String(bugId)] = taskId;
+    localStorage.setItem(TASK_LINKS_KEY, JSON.stringify(links));
+  } catch {
+    // storage unavailable: ignore
+  }
+};
+
+// Reads the linked task id from the bug, whatever the backend calls it
+const readTaskId = (bug) => {
+  if (!bug) return null;
+
+  const direct =
+    bug.taskId ??
+    bug.task_id ??
+    bug.taskID ??
+    bug.parentTaskId ??
+    bug.linkedTaskId ??
+    bug.linkedTask?.id ??
+    bug.task?.id;
+  if (direct !== undefined && direct !== null && direct !== "") return direct;
+
+  // Any other field with "task" in its name that holds an id
+  for (const [key, value] of Object.entries(bug)) {
+    if (!/task/i.test(key) || /key|title|name/i.test(key)) continue;
+    if (typeof value === "number") return value;
+    if (typeof value === "string" && /^\d+$/.test(value)) return value;
+    if (value && typeof value === "object" && value.id != null) return value.id;
+  }
+
+  // Fallback: link remembered when the bug was reported from the UI
+  const saved = loadTaskLinks()[String(bug.id)];
+  return saved !== undefined && saved !== null ? saved : null;
+};
+
+const getTaskLabel = (task) => task?.title || task?.name || `Task #${task?.id}`;
 
 const getTaskProjectId = (task) => task?.projectId ?? task?.project?.id;
 
@@ -280,14 +318,14 @@ const BugReporting = () => {
 
   const selectedColor = getProjectColor(selectedBug?.projectId);
   const selectedProject = projects.find(
-    (project) => String(project.id) === String(selectedBug?.projectId)
+    (project) => String(project.id) === String(selectedBug?.projectId),
   );
   const formProject = projects.find(
-    (project) => String(project.id) === String(form.projectId)
+    (project) => String(project.id) === String(form.projectId),
   );
   const formTasks = form.projectId
     ? tasks.filter(
-        (task) => String(getTaskProjectId(task)) === String(form.projectId)
+        (task) => String(getTaskProjectId(task)) === String(form.projectId),
       )
     : [];
   const currentRole = normalizeRole(currentUser?.role);
@@ -299,7 +337,7 @@ const BugReporting = () => {
     getProjectMembers(project).some(
       (member) =>
         String(member.userId ?? member.user?.id ?? member.id) ===
-        String(currentUser?.id)
+        String(currentUser?.id),
     );
   const isProjectTeamLead = (project) =>
     currentRole === ROLES.TEAM_LEAD &&
@@ -307,7 +345,9 @@ const BugReporting = () => {
       (member) =>
         String(member.userId ?? member.user?.id ?? member.id) ===
           String(currentUser?.id) &&
-        String(member.teamRole ?? member.role ?? member.projectRole ?? "").toLowerCase() === "team lead"
+        String(
+          member.teamRole ?? member.role ?? member.projectRole ?? "",
+        ).toLowerCase() === "team lead",
     );
   const canManageBug = (project) =>
     currentRole === ROLES.ADMIN ||
@@ -320,9 +360,10 @@ const BugReporting = () => {
   const canAssignBug = (project) =>
     canManageBug(project) || isProjectTeamLead(project);
   const canEditBug = (bug) => {
-    const rawBug = bugs.find((item) => String(item.id) === String(bug?.id)) || bug;
+    const rawBug =
+      bugs.find((item) => String(item.id) === String(bug?.id)) || bug;
     const project = projects.find(
-      (item) => String(item.id) === String(rawBug?.projectId)
+      (item) => String(item.id) === String(rawBug?.projectId),
     );
     return (
       canManageBug(project) ||
@@ -332,9 +373,10 @@ const BugReporting = () => {
     );
   };
   const canTransitionBug = (bug, nextStatus) => {
-    const rawBug = bugs.find((item) => String(item.id) === String(bug?.id)) || bug;
+    const rawBug =
+      bugs.find((item) => String(item.id) === String(bug?.id)) || bug;
     const project = projects.find(
-      (item) => String(item.id) === String(rawBug?.projectId)
+      (item) => String(item.id) === String(rawBug?.projectId),
     );
     const previousStatus = rawBug?.status;
     if (!STATUS_TRANSITIONS[previousStatus]?.includes(nextStatus)) return false;
@@ -344,14 +386,16 @@ const BugReporting = () => {
       isProjectTeamLead(project) &&
       ((previousStatus === "New" && nextStatus === "Triaged") ||
         (previousStatus === "Triaged" && nextStatus === "Assigned"))
-    ) return true;
+    )
+      return true;
     if (
       [ROLES.DEVELOPER, ROLES.TEAM_MEMBER].includes(currentRole) &&
       String(currentUser?.id) === String(rawBug?.assignedTo) &&
       ((previousStatus === "Assigned" && nextStatus === "In Progress") ||
         (previousStatus === "In Progress" && nextStatus === "Fixed") ||
         (previousStatus === "Reopened" && nextStatus === "In Progress"))
-    ) return true;
+    )
+      return true;
     return (
       [ROLES.TESTER, ROLES.QA].includes(currentRole) &&
       isProjectMember(project) &&
@@ -364,14 +408,14 @@ const BugReporting = () => {
   const eligibleAssignees = (project) => {
     const memberIds = new Set(
       getProjectMembers(project).map((member) =>
-        String(member.userId ?? member.user?.id ?? member.id)
-      )
+        String(member.userId ?? member.user?.id ?? member.id),
+      ),
     );
     return assignmentUsers.filter(
       (user) =>
         user.active !== false &&
         EXECUTION_ROLES.has(normalizeRole(user.role)) &&
-        memberIds.has(String(user.id))
+        memberIds.has(String(user.id)),
     );
   };
 
@@ -411,7 +455,7 @@ const BugReporting = () => {
     } catch (requestError) {
       setModalNotice(
         requestError.response?.data?.message ||
-          "Bug activity could not be refreshed."
+          "Bug activity could not be refreshed.",
       );
     }
   };
@@ -421,14 +465,14 @@ const BugReporting = () => {
     try {
       const response = await axios.post(
         `${BUGS_API}/${selectedBug.id}/comments`,
-        { text }
+        { text },
       );
       setComments((current) => [...current, response.data]);
       await logActivity(selectedBug.id);
       return true;
     } catch (requestError) {
       setModalNotice(
-        requestError.response?.data?.message || "Failed to post the comment."
+        requestError.response?.data?.message || "Failed to post the comment.",
       );
       return false;
     }
@@ -476,7 +520,7 @@ const BugReporting = () => {
       const member = (project.members || []).find(
         (user) =>
           String(user.id) === String(userId) ||
-          String(user.userId) === String(userId)
+          String(user.userId) === String(userId),
       );
 
       if (member) {
@@ -535,11 +579,13 @@ const BugReporting = () => {
       ) {
         try {
           const userResponse = await axios.get(`${API_BASE}/users/options`);
-          setAssignmentUsers(Array.isArray(userResponse.data) ? userResponse.data : []);
+          setAssignmentUsers(
+            Array.isArray(userResponse.data) ? userResponse.data : [],
+          );
         } catch (userError) {
           setAssignmentLoadError(
             userError.response?.data?.message ||
-              "Active bug assignees could not be loaded."
+              "Active bug assignees could not be loaded.",
           );
         }
       }
@@ -549,24 +595,27 @@ const BugReporting = () => {
         teams.map(async (project) => {
           try {
             const response = await axios.get(
-              `${API_BASE}/teams/${project.teamId}/members`
+              `${API_BASE}/teams/${project.teamId}/members`,
             );
-            return [project.id, Array.isArray(response.data) ? response.data : []];
+            return [
+              project.id,
+              Array.isArray(response.data) ? response.data : [],
+            ];
           } catch (teamError) {
             setAssignmentLoadError(
               teamError.response?.data?.message ||
-                "Project team assignments could not be loaded."
+                "Project team assignments could not be loaded.",
             );
             return [project.id, []];
           }
-        })
+        }),
       );
       setTeamMembersByProject(Object.fromEntries(teamMemberResults));
     } catch (requestError) {
       console.error("Failed to load testing data:", requestError);
       setError(
         requestError.response?.data?.message ||
-          "Testing data could not be loaded."
+          "Testing data could not be loaded.",
       );
     } finally {
       setLoading(false);
@@ -592,8 +641,7 @@ const BugReporting = () => {
 
     setForm({
       ...initialForm,
-      projectId:
-        prefill.projectId != null ? String(prefill.projectId) : "",
+      projectId: prefill.projectId != null ? String(prefill.projectId) : "",
       taskId: prefill.taskId != null ? String(prefill.taskId) : "",
       title: prefill.title ? `Bug in task: ${prefill.title}` : "",
     });
@@ -614,14 +662,18 @@ const BugReporting = () => {
     ])
       .then(([commentResponse, activityResponse]) => {
         if (!active) return;
-        setComments(Array.isArray(commentResponse.data) ? commentResponse.data : []);
-        setActivity(Array.isArray(activityResponse.data) ? activityResponse.data : []);
+        setComments(
+          Array.isArray(commentResponse.data) ? commentResponse.data : [],
+        );
+        setActivity(
+          Array.isArray(activityResponse.data) ? activityResponse.data : [],
+        );
       })
       .catch((requestError) => {
         if (!active) return;
         setModalNotice(
           requestError.response?.data?.message ||
-            "Bug discussion and activity could not be loaded."
+            "Bug discussion and activity could not be loaded.",
         );
       });
 
@@ -638,12 +690,11 @@ const BugReporting = () => {
   // Merge an API response into the bug we already have, so fields the
   // response omits (like the linked task id) are not lost.
   const applyBugUpdate = (bugId, data) => {
-    const existing =
-      bugs.find((bug) => String(bug.id) === String(bugId)) || {};
+    const existing = bugs.find((bug) => String(bug.id) === String(bugId)) || {};
     const merged = { ...existing, ...data };
 
     setBugs((current) =>
-      current.map((bug) => (String(bug.id) === String(bugId) ? merged : bug))
+      current.map((bug) => (String(bug.id) === String(bugId) ? merged : bug)),
     );
 
     setSelectedBug(normalizeBug(merged));
@@ -668,7 +719,8 @@ const BugReporting = () => {
         .join(" ");
 
       const matchesSearch = haystack.includes(query);
-      const matchesStatus = statusFilter === "All" || bug.status === statusFilter;
+      const matchesStatus =
+        statusFilter === "All" || bug.status === statusFilter;
       const matchesSeverity =
         severityFilter === "All" || bug.severity === severityFilter;
 
@@ -737,7 +789,7 @@ const BugReporting = () => {
     setError("");
 
     try {
-      await axios.post(BUGS_API, {
+      const response = await axios.post(BUGS_API, {
         title: form.title.trim(),
         description: form.description.trim(),
         projectId: Number(form.projectId),
@@ -751,12 +803,17 @@ const BugReporting = () => {
           : {}),
       });
 
+      const createdId = response.data?.id ?? response.data?.bug?.id;
+      if (form.taskId && createdId != null) {
+        saveTaskLink(createdId, Number(form.taskId));
+      }
+
       await refreshBugs();
       closeReportModal();
     } catch (requestError) {
       console.error("Failed to create bug:", requestError);
       setError(
-        requestError.response?.data?.message || "Failed to create the bug."
+        requestError.response?.data?.message || "Failed to create the bug.",
       );
     } finally {
       setSaving(false);
@@ -775,7 +832,7 @@ const BugReporting = () => {
     } catch (requestError) {
       console.error("Failed to update bug status:", requestError);
       setModalNotice(
-        requestError.response?.data?.message || "Failed to update bug status."
+        requestError.response?.data?.message || "Failed to update bug status.",
       );
     }
   };
@@ -789,17 +846,20 @@ const BugReporting = () => {
     try {
       const response = await axios.patch(
         `${BUGS_API}/${selectedBug.id}/assignment`,
-        { assignedTo: assignmentUserId ? Number(assignmentUserId) : null }
+        { assignedTo: assignmentUserId ? Number(assignmentUserId) : null },
       );
       applyBugUpdate(selectedBug.id, response.data);
       setModalNotice("");
       setAssignmentUserId(
-        response.data.assignedTo == null ? "" : String(response.data.assignedTo)
+        response.data.assignedTo == null
+          ? ""
+          : String(response.data.assignedTo),
       );
       await logActivity(selectedBug.id);
     } catch (requestError) {
       setModalNotice(
-        requestError.response?.data?.message || "Failed to update bug assignment."
+        requestError.response?.data?.message ||
+          "Failed to update bug assignment.",
       );
     } finally {
       setAssignmentSaving(false);
@@ -833,7 +893,7 @@ const BugReporting = () => {
       await logActivity(selectedBug.id);
     } catch (requestError) {
       setModalNotice(
-        requestError.response?.data?.message || "Failed to update bug details."
+        requestError.response?.data?.message || "Failed to update bug details.",
       );
     }
   };
@@ -843,31 +903,36 @@ const BugReporting = () => {
       await axios.delete(`${BUGS_API}/${bugId}`);
 
       setBugs((current) =>
-        current.filter((bug) => String(bug.id) !== String(bugId))
+        current.filter((bug) => String(bug.id) !== String(bugId)),
       );
 
       closeDetails();
     } catch (requestError) {
       console.error("Failed to delete bug:", requestError);
       setModalNotice(
-        requestError.response?.data?.message || "Failed to delete bug."
+        requestError.response?.data?.message || "Failed to delete bug.",
       );
     }
   };
 
   const getStatusConfig = (status) => statusConfig[status] || statusConfig.New;
 
-  const nextStatus = selectedBug && selectedBug.status !== "Retest"
-    ? workflow.find((status) => canTransitionBug(selectedBug, status))
-    : null;
+  const nextStatus =
+    selectedBug && selectedBug.status !== "Retest"
+      ? workflow.find((status) => canTransitionBug(selectedBug, status))
+      : null;
 
   const SelectedStatusIcon = selectedBug
     ? getStatusConfig(selectedBug.status).icon
     : null;
 
   // Data for the details modal
-  const mergedActivity = selectedBug ? mergeActivity(selectedBug, activity) : [];
-  const mergedComments = selectedBug ? mergeComments(selectedBug, comments) : [];
+  const mergedActivity = selectedBug
+    ? mergeActivity(selectedBug, activity)
+    : [];
+  const mergedComments = selectedBug
+    ? mergeComments(selectedBug, comments)
+    : [];
 
   const projectMembers = selectedBug
     ? (getProject(selectedBug.projectId)?.members || []).map((member) => ({
@@ -887,7 +952,7 @@ const BugReporting = () => {
     ? bugs.filter(
         (bug) =>
           String(bug.assignedTo) === String(rawSelected.assignedTo) &&
-          bug.status !== CLOSED
+          bug.status !== CLOSED,
       ).length
     : 0;
 
@@ -1450,9 +1515,12 @@ const BugReporting = () => {
                         <span className={labelClass}>Title</span>
                         <input
                           value={editForm?.title || ""}
-                          onChange={(event) => setEditForm((value) => ({
-                            ...value, title: event.target.value,
-                          }))}
+                          onChange={(event) =>
+                            setEditForm((value) => ({
+                              ...value,
+                              title: event.target.value,
+                            }))
+                          }
                           className={fieldClass}
                           maxLength={255}
                           required
@@ -1462,9 +1530,12 @@ const BugReporting = () => {
                         <span className={labelClass}>Description</span>
                         <textarea
                           value={editForm?.description || ""}
-                          onChange={(event) => setEditForm((value) => ({
-                            ...value, description: event.target.value,
-                          }))}
+                          onChange={(event) =>
+                            setEditForm((value) => ({
+                              ...value,
+                              description: event.target.value,
+                            }))
+                          }
                           className={fieldClass}
                           rows={5}
                           required
@@ -1481,9 +1552,12 @@ const BugReporting = () => {
                             <span className={labelClass}>{label}</span>
                             <input
                               value={editForm?.[field] || ""}
-                              onChange={(event) => setEditForm((value) => ({
-                                ...value, [field]: event.target.value,
-                              }))}
+                              onChange={(event) =>
+                                setEditForm((value) => ({
+                                  ...value,
+                                  [field]: event.target.value,
+                                }))
+                              }
                               className={fieldClass}
                               required
                             />
@@ -1491,10 +1565,18 @@ const BugReporting = () => {
                         ))}
                       </div>
                       <div className="flex justify-end gap-2">
-                        <button type="button" className={outlineBtn} onClick={() => setEditingBug(false)}>
+                        <button
+                          type="button"
+                          className={outlineBtn}
+                          onClick={() => setEditingBug(false)}
+                        >
                           Cancel
                         </button>
-                        <button type="button" className={primaryBtn} onClick={saveBugDetails}>
+                        <button
+                          type="button"
+                          className={primaryBtn}
+                          onClick={saveBugDetails}
+                        >
                           Save changes
                         </button>
                       </div>
@@ -1606,7 +1688,7 @@ const BugReporting = () => {
                           <div className="mt-2 flex items-center gap-3">
                             <span
                               className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white ${avatarColor(
-                                selectedBug.assignedTo
+                                selectedBug.assignedTo,
                               )}`}
                             >
                               {getInitials(selectedBug.assignedTo)}
@@ -1630,18 +1712,28 @@ const BugReporting = () => {
                           <div className="mt-3 flex flex-wrap gap-2">
                             <select
                               value={assignmentUserId}
-                              onChange={(event) => setAssignmentUserId(event.target.value)}
+                              onChange={(event) =>
+                                setAssignmentUserId(event.target.value)
+                              }
                               className={`${fieldClass} min-w-48 flex-1`}
                             >
                               <option value="">Unassigned</option>
-                              {eligibleAssignees(selectedProject).map((member) => {
-                                const id = member.userId ?? member.user?.id ?? member.id;
-                                return (
-                                  <option key={id} value={id}>
-                                    {member.fullName || member.user?.fullName || member.name || `User #${id}`}
-                                  </option>
-                                );
-                              })}
+                              {eligibleAssignees(selectedProject).map(
+                                (member) => {
+                                  const id =
+                                    member.userId ??
+                                    member.user?.id ??
+                                    member.id;
+                                  return (
+                                    <option key={id} value={id}>
+                                      {member.fullName ||
+                                        member.user?.fullName ||
+                                        member.name ||
+                                        `User #${id}`}
+                                    </option>
+                                  );
+                                },
+                              )}
                             </select>
                             <button
                               type="button"
@@ -1649,7 +1741,9 @@ const BugReporting = () => {
                               disabled={assignmentSaving}
                               onClick={updateAssignment}
                             >
-                              {assignmentSaving ? "Saving..." : "Save assignment"}
+                              {assignmentSaving
+                                ? "Saving..."
+                                : "Save assignment"}
                             </button>
                           </div>
                         )}
@@ -1675,7 +1769,9 @@ const BugReporting = () => {
                             {allowed ? (
                               <button
                                 type="button"
-                                onClick={() => updateBugStatus(selectedBug.id, stage)}
+                                onClick={() =>
+                                  updateBugStatus(selectedBug.id, stage)
+                                }
                                 className="rounded-full bg-gray-100 px-3 py-1.5 text-xs font-semibold text-gray-700 transition hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
                               >
                                 {stage}
@@ -1704,8 +1800,8 @@ const BugReporting = () => {
                           Bug Reopened
                         </p>
                         <p className="mt-1 text-xs text-red-700 dark:text-red-400">
-                          The retest failed. Move the bug back to In Progress for
-                          another fix.
+                          The retest failed. Move the bug back to In Progress
+                          for another fix.
                         </p>
                       </div>
                     )}
@@ -1725,7 +1821,9 @@ const BugReporting = () => {
                         <div className="mt-4 flex gap-3">
                           <button
                             type="button"
-                            onClick={() => handleRetest(selectedBug.id, "Passed")}
+                            onClick={() =>
+                              handleRetest(selectedBug.id, "Passed")
+                            }
                             disabled={!canTransitionBug(selectedBug, "Closed")}
                             className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
                           >
@@ -1734,8 +1832,12 @@ const BugReporting = () => {
 
                           <button
                             type="button"
-                            onClick={() => handleRetest(selectedBug.id, "Failed")}
-                            disabled={!canTransitionBug(selectedBug, "Reopened")}
+                            onClick={() =>
+                              handleRetest(selectedBug.id, "Failed")
+                            }
+                            disabled={
+                              !canTransitionBug(selectedBug, "Reopened")
+                            }
                             className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             Failed
@@ -1822,14 +1924,19 @@ const BugReporting = () => {
                   <button
                     type="button"
                     onClick={openLinkedTask}
-                    disabled={!hasLinkedTask || !selectedBug.projectId}
+                    disabled={
+                      !hasLinkedTask ||
+                      !(selectedBug.projectId ?? getTaskProjectId(linkedTask))
+                    }
                     title={
                       hasLinkedTask
                         ? "Open linked task"
                         : "No task linked to this bug"
                     }
-                    className={`${linkBtnBase} ${selectedColor.soft}`}
+                    
+                   className="inline-flex items-center gap-2 rounded-lg border border-blue-300 bg-blue-100 px-4 py-2 text-sm font-bold text-blue-800 hover:bg-blue-200 disabled:cursor-not-allowed disabled:opacity-100"
                   >
+
                     Open Task
                     <PiArrowRight size={16} />
                   </button>
@@ -1851,7 +1958,9 @@ const BugReporting = () => {
                   {nextStatus && (
                     <button
                       type="button"
-                      onClick={() => updateBugStatus(selectedBug.id, nextStatus)}
+                      onClick={() =>
+                        updateBugStatus(selectedBug.id, nextStatus)
+                      }
                       className={primaryBtn}
                     >
                       Move to {nextStatus}
