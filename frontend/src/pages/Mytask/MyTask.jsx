@@ -461,17 +461,10 @@ const MyTask = () => {
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-2">
                           {isParentTask ? (
-                            <>
-                              <PiBriefcase
-                                size={17}
-                                className="text-blue-600 dark:text-blue-400 shrink-0"
-                              />
-                              {item.taskKey && (
-                                <span className="rounded bg-blue-50 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-blue-700 dark:bg-blue-950/60 dark:text-blue-300">
-                                  {item.taskKey}
-                                </span>
-                              )}
-                            </>
+                            <PiBriefcase
+                              size={17}
+                              className="text-blue-600 dark:text-blue-400"
+                            />
                           ) : (
                             <span className="rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-300">
                               SUB
@@ -493,11 +486,9 @@ const MyTask = () => {
                       <td className="px-6 py-4 text-xs text-slate-600 dark:text-slate-300">
                         <p className="font-medium text-slate-900 dark:text-white">
                           {isParentTask
-                            ? (item.taskKey ? `Parent Task (${item.taskKey})` : "Parent Task")
-                            : (parentTask?.taskKey
-                                ? `${parentTask.taskKey}: ${parentTask.title}`
-                                : parentTask?.title ||
-                                  (item.taskKey ? `Task ${item.taskKey}` : `Task #${item.taskId}`))}
+                            ? "Parent Task"
+                            : parentTask?.title ||
+                              `Task #${item.taskId}`}
                         </p>
 
                         <p className="mt-0.5 text-slate-500 dark:text-slate-400">
