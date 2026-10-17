@@ -54,6 +54,7 @@ public class ProjectService {
     private final com.neuroforge.backend.repository.SubtaskRepository subtaskRepository;
     private final com.neuroforge.backend.repository.ProjectMemberAssignmentRepository projectMemberAssignmentRepository;
     private final AccessService access;
+    private final TaskKeyService taskKeyService;
 
     // ------------------------------------------------------------------ queries
 
@@ -736,26 +737,9 @@ public class ProjectService {
     }
 
     private String nextProjectKey(String code, String name) {
-
-        String source = code != null && !code.isBlank() ? code : name;
-
-        String letters = source == null ? "" : source.replaceAll("[^A-Za-z]", "");
-
-        String prefix = (letters + "NEX")
-                .substring(0, Math.min(3, letters.length() + 3))
-                .toUpperCase();
-
-        if (!projectRepository.existsByProjectKeyIgnoreCase(prefix)) {
-            return prefix;
-        }
-
-        for (char suffix = 'A'; suffix <= 'Z'; suffix++) {
-            String candidate = prefix.substring(0, 2) + suffix;
-            if (!projectRepository.existsByProjectKeyIgnoreCase(candidate)) {
-                return candidate;
-            }
-        }
-
-        throw new IllegalStateException("Unable to generate a unique project key");
+        Project temp = new Project();
+        temp.setCode(code);
+        temp.setName(name);
+        return taskKeyService.generateUniqueProjectKey(temp);
     }
 }

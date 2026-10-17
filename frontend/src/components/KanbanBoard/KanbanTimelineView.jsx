@@ -349,6 +349,11 @@ const KanbanTimelineView = ({ tasks = [], onUpdateStatus, onSelectTask }) => {
                               onClick={() => onSelectTask && onSelectTask(task)}
                               className="text-sm sm:text-base font-semibold text-slate-900 dark:text-white transition group-hover:text-blue-600 dark:group-hover:text-blue-400 cursor-pointer"
                             >
+                              {task.taskKey && (
+                                <span className="mr-2 font-mono text-xs font-semibold text-blue-600 dark:text-blue-400">
+                                  {task.taskKey}
+                                </span>
+                              )}
                               {task.title}
                             </h4>
 

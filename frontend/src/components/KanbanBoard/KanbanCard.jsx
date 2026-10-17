@@ -71,8 +71,8 @@ function KanbanCard({
       onDragEnd={onDragEnd}
     >
       <div className="flex items-center justify-between gap-3">
-        <span className="text-xs font-semibold text-[#64748B] dark:text-slate-400">
-          #{task.id}
+        <span className="font-mono text-xs font-semibold text-blue-600 dark:text-blue-400">
+          {task.taskKey || `#${task.id}`}
         </span>
 
         <span

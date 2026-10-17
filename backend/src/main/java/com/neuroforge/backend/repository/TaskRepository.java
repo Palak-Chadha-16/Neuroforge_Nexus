@@ -40,6 +40,17 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
 
     Optional<Task> findByTaskKey(String taskKey);
 
+    boolean existsByTaskKey(String taskKey);
+
+    @Query("SELECT t.taskKey FROM Task t WHERE t.project.id = :projectId AND t.taskKey IS NOT NULL")
+    List<String> findTaskKeysByProjectId(@Param("projectId") Long projectId);
+
+    @Query("SELECT t FROM Task t WHERE t.taskKey IS NULL ORDER BY t.id ASC")
+    List<Task> findTasksWithNullKey();
+
+    @Query("SELECT t FROM Task t WHERE t.project.id = :projectId AND t.taskKey IS NULL ORDER BY t.id ASC")
+    List<Task> findTasksWithNullKeyByProjectId(@Param("projectId") Long projectId);
+
     @Query("select coalesce(sum(t.storyPoints), 0) from Task t " +
             "where t.sprint.id = :sprintId and t.boardStatus = :status")
     int sumPointsBySprintAndStatus(@Param("sprintId") Long sprintId,

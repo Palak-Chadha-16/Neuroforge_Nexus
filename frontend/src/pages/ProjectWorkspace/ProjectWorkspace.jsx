@@ -16,7 +16,6 @@ import {
   PiDotsThreeVertical,
   PiArrowSquareOut,
   PiGithubLogo,
-  PiRocket,
 } from "react-icons/pi";
 
 import { useProjects } from "../../context/ProjectContextStore.js";
@@ -423,16 +422,6 @@ const ProjectWorkspace = () => {
       String(teamLeadMember?.userId) === String(currentUserId));
 
   const canManageTasks = canManageProjects;
-
-  const userSkillStr = String(currentUser?.skill || "").toLowerCase();
-
-  const canTriggerPipeline =
-    canManageProjects ||
-    userSkillStr.includes("devops") ||
-    (Array.isArray(currentUser?.skills) &&
-      currentUser.skills.some((skill) =>
-        String(skill).toLowerCase().includes("devops")
-      ));
 
   const handleProjectFormChange = (event) => {
     const { name, value } = event.target;
@@ -1412,6 +1401,11 @@ const ProjectWorkspace = () => {
                           <td className="px-5 py-4">
                             <div>
                               <p className="font-semibold text-[#172033] transition group-hover:text-[#2563EB] dark:text-slate-100 dark:group-hover:text-blue-400">
+                                {task.taskKey && (
+                                  <span className="mr-2 font-mono text-xs font-semibold text-blue-600 dark:text-blue-400">
+                                    {task.taskKey}
+                                  </span>
+                                )}
                                 {task.title}
                               </p>
 
@@ -1656,8 +1650,8 @@ const ProjectWorkspace = () => {
                                         {task.priority || "Medium"}
                                       </span>
 
-                                      <span className="text-[11px] font-medium text-slate-400">
-                                        TASK-{task.id}
+                                      <span className="font-mono text-[11px] font-semibold text-blue-600 dark:text-blue-400">
+                                        {task.taskKey || `TASK-${task.id}`}
                                       </span>
                                     </div>
 

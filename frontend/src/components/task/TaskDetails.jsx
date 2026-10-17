@@ -18,8 +18,8 @@ const TaskDetails = ({ task, onClose }) => {
     await updateTask({
       id: currentTask.id,
       title: currentTask.title,
-      projectId: currentTask.project?.id,
-      assigneeId: currentTask.assignee?.id,
+      projectId: currentTask.projectId ?? currentTask.project?.id,
+      assigneeId: currentTask.assigneeId ?? currentTask.assignee?.id,
       priority: currentTask.priority,
       dueDate: currentTask.dueDate,
       status: e.target.value,
@@ -41,7 +41,12 @@ const TaskDetails = ({ task, onClose }) => {
         </button>
       </div>
 
-      <div className="mt-3">
+      <div className="mt-3 flex items-center gap-2">
+        {currentTask.taskKey && (
+          <span className="rounded-md bg-blue-50 px-2.5 py-1 font-mono text-sm font-semibold text-blue-700 dark:bg-blue-950/60 dark:text-blue-300">
+            {currentTask.taskKey}
+          </span>
+        )}
         <span className="text-xl font-semibold text-slate-900 dark:text-white">
           {currentTask.title}
         </span>
