@@ -100,11 +100,15 @@ public class TaskService {
     }
 
     /** GET /api/tasks/{id} */
-    @Transactional(readOnly = true)
+    @Transactional
     public TaskResponse get(Long id) {
         AuthUser user = CurrentUser.get();
         Task task = find(id);
         assertCanView(user, task);
+        if (task.getTaskKey() == null || task.getTaskKey().isBlank()) {
+            task.setTaskKey(taskKeyService.nextKey(task.getProject()));
+            task = taskRepository.saveAndFlush(task);
+        }
         return TaskResponse.from(task);
     }
 
@@ -176,13 +180,20 @@ public class TaskService {
         applyBasicTaskInformation(task, request);
 
         // If the project changes:
-        // generate a new task key and remove the old sprint.
+        // generate a new task key, remove dependencies, and remove the old sprint.
         if (projectChanged) {
+            String newKey = taskKeyService.nextKey(project);
             task.setProject(project);
-            task.setTaskKey(taskKeyService.nextKey(project));
+            task.setTaskKey(newKey);
             task.setSprint(null);
             task.setBoardPosition(0);
             currentSprint = null;
+            taskDependencyRepository.deleteByTaskId(id);
+            taskDependencyRepository.deleteByDependsOnId(id);
+        } else {
+            if (task.getTaskKey() == null || task.getTaskKey().isBlank()) {
+                task.setTaskKey(taskKeyService.nextKey(project));
+            }
         }
 
         setAssignee(

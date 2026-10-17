@@ -11,7 +11,7 @@ public final class SubtaskDtos {
     public record UserRef(Long id, String fullName, String email, String skill) {}
     public record TeamRef(Long id, String name, String teamCode) {}
     public record SubtaskResponse(
-            Long id, Long taskId, String title, String description,
+            Long id, Long taskId, String taskKey, String title, String description,
             Long assigneeId, UserRef assignee,
             Long teamId, TeamRef team,
             String status, String priority, LocalDate dueDate,
@@ -19,9 +19,11 @@ public final class SubtaskDtos {
         public static SubtaskResponse from(Subtask s) {
             var user = s.getAssignee();
             var team = s.getTeam();
+            var task = s.getTask();
             return new SubtaskResponse(
                     s.getId(),
-                    s.getTask().getId(),
+                    task == null ? null : task.getId(),
+                    task == null ? null : task.getTaskKey(),
                     s.getTitle(),
                     s.getDescription(),
                     user == null ? null : user.getId(),

@@ -212,6 +212,11 @@ const KanbanListView = ({ tasks = [], onUpdateStatus, onSelectTask }) => {
                       <td className="px-5 py-4 max-w-md">
                         <div>
                           <p className="font-semibold text-slate-900 transition group-hover:text-blue-600 dark:text-white dark:group-hover:text-blue-400">
+                            {task.taskKey && (
+                              <span className="mr-2 font-mono text-xs font-semibold text-blue-600 dark:text-blue-400">
+                                {task.taskKey}
+                              </span>
+                            )}
                             {task.title}
                           </p>
                           {task.description && (

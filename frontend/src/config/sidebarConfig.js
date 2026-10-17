@@ -8,7 +8,6 @@ PiCalendarBlank,
 PiBug,
 PiGearSix,
 PiShieldCheck,
-PiRocket,
 } from "react-icons/pi";
 
 import { ROLES, MEMBER_ROLES, normalizeRole } from "../constants/roles.js";

@@ -522,9 +522,16 @@ const TaskManagement = () => {
                     className="group cursor-pointer transition hover:bg-slate-50/80 dark:hover:bg-slate-800/40"
                   >
                     <td className="px-6 py-4">
-                      <span className="font-semibold text-slate-900 transition group-hover:text-blue-600 dark:text-white dark:group-hover:text-blue-400">
-                        {task.title}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        {task.taskKey && (
+                          <span className="rounded bg-blue-50 px-2 py-0.5 font-mono text-xs font-semibold text-blue-700 dark:bg-blue-950/60 dark:text-blue-300">
+                            {task.taskKey}
+                          </span>
+                        )}
+                        <span className="font-semibold text-slate-900 transition group-hover:text-blue-600 dark:text-white dark:group-hover:text-blue-400">
+                          {task.title}
+                        </span>
+                      </div>
                     </td>
 
                     <td className="px-6 py-4 text-xs text-slate-600 dark:text-slate-300">

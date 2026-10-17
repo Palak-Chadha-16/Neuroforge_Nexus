@@ -31,6 +31,7 @@ public class DataInitializer implements ApplicationRunner {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final ProjectService projectService;
+    private final com.neuroforge.backend.service.TaskKeyService taskKeyService;
 
     @Value("${app.bootstrap-admin.full-name:System Admin}")
     private String fullName;
@@ -50,6 +51,7 @@ public class DataInitializer implements ApplicationRunner {
     @Override
     public void run(ApplicationArguments args) {
         createFirstAdminIfMissing();
+        taskKeyService.syncAllProjectsAndBackfillTasks();
         projectService.recalculateAllStatuses();
     }
 

@@ -10,13 +10,20 @@ const normalizeTask = (task) => {
   if (!task) return task;
   const projId = task.projectId ?? task.project?.id ?? task.project_id ?? null;
   const assId = task.assigneeId ?? task.assignee?.id ?? task.assignee_id ?? null;
-  return { ...task, projectId: projId ? Number(projId) : null, assigneeId: assId ? Number(assId) : null };
+  return {
+    ...task,
+    id: task.id != null ? Number(task.id) : null,
+    taskKey: task.taskKey || null,
+    projectId: projId ? Number(projId) : null,
+    assigneeId: assId ? Number(assId) : null,
+  };
 };
 
 const normalizeSubtask = (subtask) => ({
   ...subtask,
-  id: Number(subtask.id),
+  id: subtask.id != null ? Number(subtask.id) : null,
   taskId: Number(subtask.taskId ?? subtask.task?.id),
+  taskKey: subtask.taskKey ?? subtask.task?.taskKey ?? null,
   assigneeId: subtask.assigneeId == null ? null : Number(subtask.assigneeId ?? subtask.assignee?.id),
   teamId: subtask.teamId == null ? null : Number(subtask.teamId ?? subtask.team?.id),
 });
@@ -31,7 +38,7 @@ export const TasksProvider = ({ children }) => {
     setLoading(true);
     setError("");
     try {
-            const response = await axios.get(API_BASE);
+      const response = await axios.get(API_BASE);
       const data = Array.isArray(response.data) ? response.data : [];
 
       if (data.length === 0) {
@@ -88,7 +95,7 @@ export const TasksProvider = ({ children }) => {
 
   const createTask = async (formData) => {
     try {
-            const response = await axios.post(
+      const response = await axios.post(
         API_BASE,
         buildPayload(formData)
       );
@@ -104,42 +111,24 @@ export const TasksProvider = ({ children }) => {
         data: newTask,
       };
     } catch (err) {
-      console.warn(
-        "Backend task creation failed, falling back to local state:",
-        err.message
-      );
-
-      const newTask = normalizeTask({
-        ...formData,
-        id: Date.now(),
-        status: formData.status || "To Do",
-        boardStatus: formData.status || "To Do",
-        priority: formData.priority || "Medium",
-      });
-
-      setTasks((prev) => [...prev, newTask]);
-
+      const message =
+        err.response?.data?.message ||
+        err.message ||
+        "Failed to create task.";
       return {
-        success: true,
-        data: newTask,
+        success: false,
+        message,
       };
     }
   };
 
   const updateTaskStatus = async (taskId, newStatus) => {
     try {
-            const response = await axios.patch(`${API_BASE}/${taskId}/status`, {
+      const response = await axios.patch(`${API_BASE}/${taskId}/status`, {
         status: newStatus,
       });
 
-      const existingTask = getTaskById(taskId);
-      const updated = normalizeTask(
-        response.data || {
-          ...existingTask,
-          id: taskId,
-          status: newStatus,
-        }
-      );
+      const updated = normalizeTask(response.data);
 
       setTasks((prev) =>
         prev.map((task) =>
@@ -159,35 +148,13 @@ export const TasksProvider = ({ children }) => {
         data: updated,
       };
     } catch (err) {
-      console.warn(
-        "Backend update task status failed, falling back to local state:",
-        err.message
-      );
-
-      const existingTask = getTaskById(taskId);
-      const updated = normalizeTask({
-        ...existingTask,
-        id: taskId,
-        status: newStatus,
-        boardStatus: newStatus,
-      });
-
-      setTasks((prev) =>
-        prev.map((task) =>
-          String(task.id) === String(taskId)
-            ? {
-                ...task,
-                ...updated,
-                status: newStatus,
-                boardStatus: newStatus,
-              }
-            : task
-        )
-      );
-
+      const message =
+        err.response?.data?.message ||
+        err.message ||
+        "Failed to update task status.";
       return {
-        success: true,
-        data: updated,
+        success: false,
+        message,
       };
     }
   };
@@ -238,7 +205,7 @@ export const TasksProvider = ({ children }) => {
     }
 
     try {
-            const response = await axios.put(
+      const response = await axios.put(
         `${API_BASE}/${formData.id}`,
         buildPayload(formData)
       );
@@ -263,63 +230,50 @@ export const TasksProvider = ({ children }) => {
         data: updated,
       };
     } catch (err) {
-      console.warn(
-        "Backend task update failed, falling back to local state:",
-        err.message
-      );
-
-      const updated = normalizeTask({
-        ...existingTask,
-        ...formData,
-      });
-
-      setTasks((prev) =>
-        prev.map((task) =>
-          String(task.id) === String(formData.id)
-            ? {
-                ...task,
-                ...updated,
-              }
-            : task
-        )
-      );
-
+      const message =
+        err.response?.data?.message ||
+        err.message ||
+        "Failed to update task.";
       return {
-        success: true,
-        data: updated,
+        success: false,
+        message,
       };
     }
   };
 
   const deleteTask = async (taskId) => {
     try {
-            await axios.delete(
+      await axios.delete(
         `${API_BASE}/${taskId}`
       );
-    } catch (err) {
-      console.warn(
-        "Backend task deletion failed, removing locally:",
-        err.message
+
+      setTasks((prev) =>
+        prev.filter(
+          (task) =>
+            String(task.id) !== String(taskId)
+        )
       );
+
+      // Also cleanup subtasks under this parent task
+      setSubtasks((prev) =>
+        prev.filter(
+          (sub) =>
+            String(sub.taskId) !==
+            String(taskId)
+        )
+      );
+
+      return { success: true };
+    } catch (err) {
+      const message =
+        err.response?.data?.message ||
+        err.message ||
+        "Failed to delete task.";
+      return {
+        success: false,
+        message,
+      };
     }
-
-    setTasks((prev) =>
-      prev.filter(
-        (task) =>
-          String(task.id) !== String(taskId)
-      )
-    );
-
-    // Also cleanup subtasks under this parent task
-    setSubtasks((prev) =>
-      prev.filter(
-        (sub) =>
-          String(sub.taskId) !==
-          String(taskId)
-      )
-    );
-
-    return { success: true };
   };
 
   const getTaskById = (taskId) => {
@@ -339,7 +293,7 @@ export const TasksProvider = ({ children }) => {
   const createSubtask = async (taskId, subtaskData) => {
     if (!taskId || !subtaskData?.title) return { success: false, message: "Task ID and title are required." };
     try {
-            const response = await axios.post(`${API_BASE}/${taskId}/subtasks`, {
+      const response = await axios.post(`${API_BASE}/${taskId}/subtasks`, {
         title: subtaskData.title.trim(),
         description: subtaskData.description || "",
         assigneeId: subtaskData.assigneeId ? Number(subtaskData.assigneeId) : null,
@@ -352,23 +306,17 @@ export const TasksProvider = ({ children }) => {
       setSubtasks((prev) => [...prev, created]);
       return { success: true, data: created };
     } catch (error) {
-      console.warn("Backend create subtask failed, falling back to local state:", error.message);
-      const created = normalizeSubtask({
-        ...subtaskData,
-        id: Date.now(),
-        taskId: Number(taskId),
-        status: subtaskData.status || "To Do",
-        priority: subtaskData.priority || "Medium",
-        dueDate: subtaskData.dueDate || null,
-      });
-      setSubtasks((prev) => [...prev, created]);
-      return { success: true, data: created };
+      const message =
+        error.response?.data?.message ||
+        error.message ||
+        "Failed to create subtask.";
+      return { success: false, message };
     }
   };
 
   const updateSubtaskStatus = async (subtaskId, newStatus) => {
     try {
-            const response = await axios.patch(
+      const response = await axios.patch(
         `${getApiBase()}/subtasks/${subtaskId}/status`,
         {
           status: newStatus || "To Do",
@@ -384,21 +332,11 @@ export const TasksProvider = ({ children }) => {
       );
       return { success: true, data: updated };
     } catch (error) {
-      console.warn("Backend update subtask status failed, falling back to local state:", error.message);
-      const existing = subtasks.find((s) => String(s.id) === String(subtaskId));
-      const updated = normalizeSubtask({
-        ...existing,
-        id: subtaskId,
-        status: newStatus || "To Do",
-      });
-      setSubtasks((prev) =>
-        prev.map((sub) =>
-          String(sub.id) === String(subtaskId)
-            ? { ...sub, ...updated, status: newStatus || "To Do" }
-            : sub
-        )
-      );
-      return { success: true, data: updated };
+      const message =
+        error.response?.data?.message ||
+        error.message ||
+        "Failed to update subtask status.";
+      return { success: false, message };
     }
   };
 
@@ -431,7 +369,7 @@ export const TasksProvider = ({ children }) => {
     }
 
     try {
-            const response = await axios.put(`${getApiBase()}/subtasks/${updatedSubtask.id}`, {
+      const response = await axios.put(`${getApiBase()}/subtasks/${updatedSubtask.id}`, {
         title: updatedSubtask.title,
         description: updatedSubtask.description || "",
         assigneeId: updatedSubtask.assigneeId ? Number(updatedSubtask.assigneeId) : null,
@@ -444,32 +382,27 @@ export const TasksProvider = ({ children }) => {
       setSubtasks((prev) => prev.map((sub) => String(sub.id) === String(updated.id) ? { ...sub, ...updated, status: updated.status || updatedSubtask.status } : sub));
       return { success: true, data: updated };
     } catch (error) {
-      console.warn("Backend update subtask failed, falling back to local state:", error.message);
-      const existing = subtasks.find((s) => String(s.id) === String(updatedSubtask.id));
-      const updated = normalizeSubtask({
-        ...existing,
-        ...updatedSubtask,
-      });
-      setSubtasks((prev) =>
-        prev.map((sub) =>
-          String(sub.id) === String(updated.id)
-            ? { ...sub, ...updated }
-            : sub
-        )
-      );
-      return { success: true, data: updated };
+      const message =
+        error.response?.data?.message ||
+        error.message ||
+        "Failed to update subtask.";
+      return { success: false, message };
     }
   };
 
   const deleteSubtask = async (taskId, subtaskId) => {
     if (!subtaskId) return { success: false, message: "Subtask ID is required." };
     try {
-            await axios.delete(`${getApiBase()}/subtasks/${subtaskId}`);
+      await axios.delete(`${getApiBase()}/subtasks/${subtaskId}`);
+      setSubtasks((prev) => prev.filter((sub) => String(sub.id) !== String(subtaskId)));
+      return { success: true };
     } catch (error) {
-      console.warn("Backend delete subtask failed, removing locally:", error.message);
+      const message =
+        error.response?.data?.message ||
+        error.message ||
+        "Failed to delete subtask.";
+      return { success: false, message };
     }
-    setSubtasks((prev) => prev.filter((sub) => String(sub.id) !== String(subtaskId)));
-    return { success: true };
   };
 
   /* ================= SCOPING FILTERS ================= */
